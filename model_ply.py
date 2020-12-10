@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 import tqdm
 
 from mathlib import quaternion_rotation_matrix
+from model import ModelLoader
 
 
 class Transform:
@@ -21,16 +22,20 @@ class Transform:
         self.rotation = rotation
 
     @classmethod
-    def from_quat(cls, transl, rot: np.ndarray):
+    def identity(cls) -> "Transform":
+        return cls(np.array([0, 0, 0]), np.identity(3))
+
+    @classmethod
+    def from_quat(cls, transl, rot: np.ndarray) -> "Transform":
         return cls(transl, quaternion_rotation_matrix(rot))
 
     @classmethod
-    def read(cls, data: Sequence[float]):
+    def read(cls, data: Sequence[float]) -> "Transform":
         assert len(data) == 7
         d = [float(d) for d in data]
         return cls.from_quat(np.array(d[:3]), np.array(d[3:]))
 
-    def apply(self, points: np.ndarray):
+    def apply(self, points: np.ndarray) -> np.ndarray:
         assert points.shape[1] == 3
         return np.dot((points + self.translation), self.rotation)
 
@@ -75,7 +80,7 @@ class ScanFolder:
         with open(path, mode='tr') as fp:
             conf = fp.readlines()
 
-        transform: Optional[Transform] = None
+        transform: Optional[Transform] = Transform.identity()
         scans: List[Scan] = []
 
         for line in conf:
@@ -94,3 +99,42 @@ class ScanFolder:
         for scan in self.scans:
             yield scan.points()
 
+
+class PlyModelLoader(ModelLoader):
+    def load(self, path: str) -> np.ndarray:
+        scan = ScanFolder.load_ply_conf(path)
+        return scan.transform.apply(np.concatenate([s.points() for s in scan.scans]))
+
+
+def plot_dragon():
+    import plotly.graph_objects as go
+    import tqdm
+
+    scans = ScanFolder.load_ply_conf("models/dragon_stand/dragonStandRight.conf")
+
+    fig = go.Figure(
+        data=[
+            s.scatter(transf=scans.transform, mode='markers', marker=dict(size=0.5))
+            for s in tqdm.tqdm(scans.scans, desc="Load files")
+        ]
+    )
+    camera = dict(
+        up=dict(x=0, y=1, z=0)
+    )
+    fig.update_layout(
+        yaxis=dict(scaleanchor="x", scaleratio=1),
+        scene=dict(
+            aspectmode='data',
+            xaxis_title='X',
+            yaxis_title='Z',  # Flip Y/Z
+            zaxis_title='Y',  # Flip Y/Z
+            camera=camera,
+            dragmode='turntable'
+        ),
+        scene_camera=camera
+    )
+    fig.show()
+
+
+if __name__ == '__main__':
+    plot_dragon()

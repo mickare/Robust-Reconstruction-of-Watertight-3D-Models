@@ -3,3 +3,4 @@ scipy
 plyfile
 plotly
 tqdm
+PyWavefront
