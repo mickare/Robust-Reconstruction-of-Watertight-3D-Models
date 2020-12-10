@@ -1,7 +1,7 @@
 import plotly.graph_objects as go
 import tqdm
 
-from model import ScanFolder
+from model_ply import ScanFolder
 
 scans = ScanFolder.load_ply_conf("models/dragon_stand/dragonStandRight.conf")
 
