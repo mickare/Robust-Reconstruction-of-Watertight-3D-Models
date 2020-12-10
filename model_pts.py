@@ -2,6 +2,8 @@ from model import ModelLoader
 import numpy as np
 import os
 
+from render import render_cloud
+
 
 class PtsModelLoader(ModelLoader):
     def load(self, path: str) -> np.ndarray:
@@ -18,3 +20,8 @@ class PtsModelLoader(ModelLoader):
                 num_coords += 1
             coords = np.delete(coords, slice(num_coords, coords.shape[0]), 0)
         return coords
+
+
+if __name__ == '__main__':
+    data = PtsModelLoader().load("models/bunny/bunnyData.pts")
+    render_cloud(data)

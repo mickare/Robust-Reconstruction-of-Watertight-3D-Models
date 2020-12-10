@@ -35,5 +35,5 @@ def render_cloud(*args: np.ndarray):
 
 
 if __name__ == '__main__':
-    data = MeshModelLoader(20000, noise=0.5).load("models/cat/cat_reference.obj")
+    data = MeshModelLoader(20000, noise=0.1).load("models/cat/cat_reference.obj")
     render_cloud(data)
