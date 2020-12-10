@@ -9,6 +9,7 @@ from model_mesh import MeshModelLoader
 
 def render_cloud(*args: np.ndarray):
     assert args
+
     def to_scatter(pts: np.ndarray, **kwargs):
         # Flip Y/Z
         x, z, y = pts.T
@@ -34,5 +35,5 @@ def render_cloud(*args: np.ndarray):
 
 
 if __name__ == '__main__':
-    data = MeshModelLoader().load("models/Donut/Donut.obj")
+    data = MeshModelLoader(20000, noise=0.5).load("models/cat/cat_reference.obj")
     render_cloud(data)
