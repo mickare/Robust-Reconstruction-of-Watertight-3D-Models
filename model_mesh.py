@@ -161,11 +161,12 @@ class Mesh:
 
 class MeshModelLoader(ModelLoader):
 
-    def __init__(self, number_of_samples: int = 10000, noise: float = 0.0):
-        self.number_of_samples = number_of_samples
+    def __init__(self, samples: int = 10000, noise: float = 0.0):
+        self.samples = samples
         self.noise = noise
 
-    def sample_random_from(self, mesh: Mesh, number: int) -> np.ndarray:
+    @classmethod
+    def sample_random_from(cls, mesh: Mesh, number: int) -> np.ndarray:
         # Calculate probability of each face
         v1, v2, v3 = mesh.vertices[mesh.faces.T]
         a = v2 - v1
@@ -186,4 +187,6 @@ class MeshModelLoader(ModelLoader):
     def load(self, path: str, **kwargs) -> np.ndarray:
         assert path.endswith(".obj")
         mesh = Mesh.from_file_obj(path, **kwargs)
-        return self.sample_random_from(mesh, self.number_of_samples)
+        pts = self.sample_random_from(mesh, self.samples)
+        pts += np.random.random(pts.shape) * self.noise
+        return pts
