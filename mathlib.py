@@ -1,4 +1,9 @@
+from typing import Union, Tuple, Sequence
+
 import numpy as np
+
+Vec3f = Union[np.ndarray, Sequence[float], Tuple[float, float, float]]
+Vec3i = Union[np.ndarray, Sequence[int], Tuple[int, int, int]]
 
 
 def quaternion_rotation_matrix(Q):

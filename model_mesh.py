@@ -5,9 +5,8 @@ from typing import Tuple, Union, Sequence
 import numpy as np
 import pywavefront
 
+from mathlib import Vec3f
 from model import ModelLoader
-
-Vec3f = Union[np.ndarray, Sequence[float], Tuple[float, float, float]]
 
 
 @dataclass

@@ -7,7 +7,7 @@ import tqdm
 from model_mesh import MeshModelLoader
 
 
-def render_cloud(*args: np.ndarray):
+def render_cloud(*args: np.ndarray, size=0.5):
     assert args
 
     def to_scatter(pts: np.ndarray, **kwargs):
@@ -15,7 +15,7 @@ def render_cloud(*args: np.ndarray):
         x, z, y = pts.T
         return go.Scatter3d(x=x, y=y, z=z, **kwargs)
 
-    fig = go.Figure(data=[to_scatter(d, mode='markers', marker=dict(size=0.5)) for d in args])
+    fig = go.Figure(data=[to_scatter(d, mode='markers', marker=dict(size=size)) for d in args])
     camera = dict(
         up=dict(x=0, y=1, z=0)
     )
