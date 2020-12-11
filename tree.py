@@ -146,6 +146,8 @@ class ChunkGrid:
 
 
 if __name__ == '__main__':
+    from model_pts import PtsModelLoader
+    from cloud_render import CloudRender
 
     data = PtsModelLoader().load("models/bunny/bunnyData.pts")
     data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
@@ -162,4 +164,4 @@ if __name__ == '__main__':
     assert scaled.shape[1] == 3
     pts = g.crust_to_points() + 0.5
     assert pts.shape[1] == 3
-    render_cloud(scaled, pts, size=1)
+    CloudRender().plot(scaled, pts, size=1)

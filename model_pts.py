@@ -2,8 +2,6 @@ from model import ModelLoader
 import numpy as np
 import os
 
-from render import render_cloud
-
 
 class PtsModelLoader(ModelLoader):
     def load(self, path: str) -> np.ndarray:
@@ -23,5 +21,7 @@ class PtsModelLoader(ModelLoader):
 
 
 if __name__ == '__main__':
+    from cloud_render import CloudRender
+
     data = PtsModelLoader().load("models/bunny/bunnyData.pts")
-    render_cloud(data)
+    CloudRender.plot(data).show()

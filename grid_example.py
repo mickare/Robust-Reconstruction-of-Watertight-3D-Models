@@ -1,4 +1,4 @@
-from render import render_cloud
+from cloud_render import render_cloud
 from model_pts import PtsModelLoader
 
 import numpy as np
