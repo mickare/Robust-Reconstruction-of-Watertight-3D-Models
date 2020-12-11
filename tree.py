@@ -17,6 +17,7 @@ class Chunk:
         self.index = np.array(index, dtype=np.int)
         self.color: Optional[Union[int, np.ndarray]] = None
         self.distance: Union[float, np.ndarray] = 1.0
+        self.crust: Union[bool, np.ndarray] = False
 
     def set_color(self, pos: Vec3i, new_color: int):
         voxel_index = self._inner_index(pos)
@@ -45,6 +46,18 @@ class Chunk:
         else:
             raise RuntimeError("invalid distance type")
 
+    def set_crust(self, pos: Vec3i, is_crust: bool):
+        voxel_index = self._inner_index(pos)
+        if isinstance(self.crust, bool):
+            if is_crust != self.crust:
+                self.crust = np.ones(ChunkShape) * self.crust
+                self.crust[voxel_index] = is_crust
+            # else nothing to do
+        elif isinstance(self.crust, np.ndarray):
+            self.crust[voxel_index] = is_crust
+        else:
+            raise RuntimeError("invalid distance type")
+
     def _inner_index(self, pos: Vec3i) -> Tuple[int, int, int]:
         # if not (result < ChunkShape).all():
         #     print("WOW")
@@ -56,6 +69,14 @@ class Chunk:
             return np.array([]).reshape((0, 3))
         elif isinstance(self.distance, np.ndarray):
             return np.argwhere(self.distance != 1.0) + self.index * ChunkShape
+        else:
+            raise RuntimeError("invalid distance type")
+
+    def crust_to_points(self) -> np.ndarray:
+        if isinstance(self.crust, bool):
+            return np.array([]).reshape((0, 3))
+        elif isinstance(self.crust, np.ndarray):
+            return np.argwhere(self.crust) + self.index * ChunkShape
         else:
             raise RuntimeError("invalid distance type")
 
@@ -120,6 +141,9 @@ class ChunkGrid:
     def to_points(self):
         return np.concatenate([c.to_points() for c in self.chunks.values()])
 
+    def crust_to_points(self):
+        return np.concatenate([c.crust_to_points() for c in self.chunks.values()])
+
 
 data = PtsModelLoader().load("models/bunny/bunnyData.pts")
 data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
@@ -131,8 +155,9 @@ for p in scaled:
     pos = np.array(p, dtype=int)
     c = g.create_if_absent(pos)
     c.set_distance(pos, 0)
+    c.set_crust(pos, True)
 
 assert scaled.shape[1] == 3
-pts = g.to_points() + 0.5
+pts = g.crust_to_points() + 0.5
 assert pts.shape[1] == 3
 render_cloud(scaled, pts, size=1)
