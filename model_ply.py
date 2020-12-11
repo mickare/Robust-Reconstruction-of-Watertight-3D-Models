@@ -1,3 +1,4 @@
+import hashlib
 import os
 from dataclasses import dataclass
 from typing import Optional, List, Sequence, Iterator
@@ -72,13 +73,16 @@ class ScanFolder:
     scans: List[Scan]
 
     @classmethod
+    def read_conf_file(cls, path: str) -> str:
+        with open(path, mode='tr') as fp:
+            return fp.readlines()
+
+    @classmethod
     def load_ply_conf(cls, path: str):
         assert os.path.isfile(path)
 
         base = os.path.dirname(path)
-
-        with open(path, mode='tr') as fp:
-            conf = fp.readlines()
+        conf = cls.read_conf_file(path)
 
         transform: Optional[Transform] = Transform.identity()
         scans: List[Scan] = []
@@ -96,14 +100,42 @@ class ScanFolder:
         return cls(transform, scans)
 
     def iter_points(self) -> Iterator[np.ndarray]:
-        for scan in self.scans:
+        for scan in tqdm.tqdm(self.scans, desc="Loading ply points"):
             yield scan.points()
 
 
 class PlyModelLoader(ModelLoader):
+
+    def load_file(self, path: str) -> np.ndarray:
+        folder = ScanFolder.load_ply_conf(path)
+        pbar = tqdm.tqdm(folder.scans, desc=f"Loading {path}")
+        pts = []
+        for s in pbar:  # type: Scan
+            fname = os.path.basename(s.file)
+            pbar.set_description(f"Loading {fname}")
+            pts.append(s.points())
+
+        return folder.transform.apply(np.concatenate(pts))
+
+    def load_cache(self, path: str):
+        conf = ScanFolder.read_conf_file(path)
+        h = hashlib.sha256()
+        h.update(path.encode('utf-8'))
+        h.update("\n".join(conf).encode('utf-8'))
+        key = h.hexdigest()
+
+        file = os.path.join(".cache", f"{key}_ply.npy")
+        if os.path.isfile(file):
+            data = np.load(file, allow_pickle=False)
+        else:
+            data = self.load_file(path)
+            os.makedirs(".cache")
+            np.save(file, data, allow_pickle=False)
+
+        return data
+
     def load(self, path: str) -> np.ndarray:
-        scan = ScanFolder.load_ply_conf(path)
-        return scan.transform.apply(np.concatenate([s.points() for s in scan.scans]))
+        return self.load_cache(path)
 
 
 def plot_dragon():
