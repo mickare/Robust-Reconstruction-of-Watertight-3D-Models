@@ -2,7 +2,9 @@ from typing import Tuple, Sequence, Iterable, Optional
 
 import numpy as np
 import plotly.graph_objects as go
+import tqdm
 
+from model_ply import PlyModelLoader
 from tree import ChunkGrid, Chunk, ChunkSize
 
 
@@ -10,7 +12,7 @@ class MeshHelper:
     @classmethod
     def reduce_mesh(cls, vertices: Sequence[np.ndarray], faces: Sequence[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         vs = np.vstack(vertices)
-        fs = np.vstack(cls.join_faces(faces, vertices))
+        fs = np.vstack(list(cls.join_faces(faces, vertices)))
         vs2, inv = np.unique(vs, return_inverse=True, axis=0)
         fs2 = inv[fs]
         return vs2, fs2
@@ -110,8 +112,10 @@ class MeshHelper:
             raise RuntimeError("invalid chunk distance")
 
     @classmethod
-    def grid_to_voxel_mesh(cls, grid: ChunkGrid):
-        vertices, faces = zip(*(cls.chunk_to_voxel_mesh(c, parent=grid) for c in grid.chunks.values()))
+    def grid_to_voxel_mesh(cls, grid: ChunkGrid, verbose=True):
+        chunks = tqdm.tqdm(grid.chunks.values(), total=len(grid.chunks),
+                           desc="Building voxel mesh") if verbose else grid.chunks.values()
+        vertices, faces = zip(*(cls.chunk_to_voxel_mesh(c, parent=grid) for c in chunks))
         return cls.reduce_mesh(vertices, faces)
 
 
@@ -126,10 +130,10 @@ class VoxelRender:
             return x, z, y
         return x, y, z
 
-    def make_mesh(self, grid: ChunkGrid, **kwargs):
+    def make_mesh(self, grid: ChunkGrid, verbose=True, **kwargs):
         kwargs.setdefault("flatshading", True)
 
-        vertices, faces = MeshHelper.grid_to_voxel_mesh(grid)
+        vertices, faces = MeshHelper.grid_to_voxel_mesh(grid, verbose=True)
         x, y, z = self._unwrap(vertices)
         i, j, k = faces.T
         return go.Mesh3d(x=x, y=y, z=z, i=i, j=j, k=k, **kwargs)
@@ -164,10 +168,11 @@ if __name__ == '__main__':
     from cloud_render import CloudRender
     from model_pts import PtsModelLoader
 
-    data = PtsModelLoader().load("models/bunny/bunnyData.pts")
+    # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
+    data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
     data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
 
-    grid = ChunkGrid(16)
+    grid = ChunkGrid(512)
     scaled = (data - data_min) / np.max(data_max - data_min) * grid.resolution
     assert scaled.shape[1] == 3
 
