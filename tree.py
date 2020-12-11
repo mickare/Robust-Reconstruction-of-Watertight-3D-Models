@@ -1,11 +1,8 @@
-import dataclasses
-from dataclasses import dataclass
-from typing import Optional, Tuple, Dict, List, Union
+from typing import Optional, Tuple, Dict, Union, Iterator
+
 import numpy as np
 
-from mathlib import Vec3f, Vec3i
-from model_pts import PtsModelLoader
-from render import render_cloud
+from mathlib import Vec3i
 
 ChunkIndex = Tuple[int, int, int]
 ChunkSize = 8
@@ -26,7 +23,7 @@ class Chunk:
 
         if isinstance(self.color, int):
             if new_color != self.color:
-                self.color = np.ones(ChunkShape) * self.color
+                self.color = np.full(ChunkShape, self.color, dtype=np.int)
                 self.color[voxel_index] = new_color
             # else nothing to do
         elif isinstance(self.color, np.ndarray):
@@ -78,7 +75,7 @@ class Chunk:
         elif isinstance(self.crust, np.ndarray):
             return np.argwhere(self.crust) + self.index * ChunkShape
         else:
-            raise RuntimeError("invalid distance type")
+            raise RuntimeError("invalid crust type")
 
     def fill(self, pos: Vec3i, color: int):
         if self.color is None:  # Nicht gefüllt
@@ -91,6 +88,14 @@ class Chunk:
             # TODO FILL
         else:
             raise RuntimeError("invalid color type!")
+
+    def crust_voxels(self) -> np.ndarray:
+        if isinstance(self.crust, bool):
+            return np.full(ChunkShape, self.crust, dtype=np.bool)
+        elif isinstance(self.crust, np.ndarray):
+            return self.crust
+        else:
+            raise RuntimeError("invalid crust type")
 
 
 class ChunkGrid:
@@ -143,6 +148,17 @@ class ChunkGrid:
 
     def crust_to_points(self):
         return np.concatenate([c.crust_to_points() for c in self.chunks.values()])
+
+    def iter_neighbors(self, index: ChunkIndex, flatten=True) -> Iterator[Optional[Chunk]]:
+        tmp = np.asarray(index)
+        for di in ((-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)):
+            i = tmp + di
+            c = self.get_chunk_by_index(i)
+            if flatten:
+                if c:
+                    yield c
+            else:
+                yield c
 
 
 if __name__ == '__main__':
