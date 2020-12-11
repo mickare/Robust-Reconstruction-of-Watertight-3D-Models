@@ -145,19 +145,21 @@ class ChunkGrid:
         return np.concatenate([c.crust_to_points() for c in self.chunks.values()])
 
 
-data = PtsModelLoader().load("models/bunny/bunnyData.pts")
-data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
+if __name__ == '__main__':
 
-g = ChunkGrid(16)
-scaled = (data - data_min) / np.max(data_max - data_min) * g.resolution
+    data = PtsModelLoader().load("models/bunny/bunnyData.pts")
+    data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
 
-for p in scaled:
-    pos = np.array(p, dtype=int)
-    c = g.create_if_absent(pos)
-    c.set_distance(pos, 0)
-    c.set_crust(pos, True)
+    g = ChunkGrid(16)
+    scaled = (data - data_min) / np.max(data_max - data_min) * g.resolution
 
-assert scaled.shape[1] == 3
-pts = g.crust_to_points() + 0.5
-assert pts.shape[1] == 3
-render_cloud(scaled, pts, size=1)
+    for p in scaled:
+        pos = np.array(p, dtype=int)
+        c = g.create_if_absent(pos)
+        c.set_distance(pos, 0)
+        c.set_crust(pos, True)
+
+    assert scaled.shape[1] == 3
+    pts = g.crust_to_points() + 0.5
+    assert pts.shape[1] == 3
+    render_cloud(scaled, pts, size=1)
