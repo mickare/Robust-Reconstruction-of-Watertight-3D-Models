@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import tqdm
 
+from model_mesh import MeshModelLoader
 from model_ply import PlyModelLoader
 from tree import ChunkGrid, Chunk, ChunkSize
 
@@ -32,84 +33,84 @@ class MeshHelper:
             neighbors = list(parent.iter_neighbors(chunk.index, flatten=False))
             assert len(neighbors) == 6
 
-        if isinstance(chunk.crust, np.ndarray):
+        if isinstance(chunk.crust, bool) and not chunk.crust:
+            return np.empty((0, 3)), np.empty((0, 3))
 
-            cx = np.array(np.pad(chunk.crust, ((1, 1), (0, 0), (0, 0)), constant_values=False), dtype=np.bool)
-            cy = np.array(np.pad(chunk.crust, ((0, 0), (1, 1), (0, 0)), constant_values=False), dtype=np.bool)
-            cz = np.array(np.pad(chunk.crust, ((0, 0), (0, 0), (1, 1)), constant_values=False), dtype=np.bool)
+        # if isinstance(chunk.crust, bool) and chunk.crust:
+        #     vertices = np.array([
+        #         (0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1),
+        #         (1, 0, 0), (1, 0, 1), (1, 1, 0), (1, 1, 1)
+        #     ], dtype=np.float) * ChunkSize
+        #     faces = np.array([
+        #         (0, 1, 2), (3, 2, 1),  # Face
+        #         (2, 3, 6), (7, 6, 3),  #
+        #         (3, 1, 7), (5, 7, 1),  #
+        #         (7, 5, 6), (4, 6, 5),  #
+        #         (5, 1, 4), (0, 4, 1),  #
+        #         (4, 0, 6), (2, 6, 0)
+        #     ], dtype=np.int)
+        #     return vertices, faces
 
-            # X-Neighbors
-            if neighbors[0]:
-                cx[0, :, :] = neighbors[0].crust_voxels()[-1, :, :]
-            if neighbors[1]:
-                cx[-1, :, :] = neighbors[1].crust_voxels()[0, :, :]
+        crust = chunk.crust_voxels()
 
-            # Y-Neighbors
-            if neighbors[2]:
-                cy[:, 0, :] = neighbors[2].crust_voxels()[:, -1, :]
-            if neighbors[3]:
-                cy[:, -1, :] = neighbors[3].crust_voxels()[:, 0, :]
+        cx = np.array(np.pad(crust, ((1, 1), (0, 0), (0, 0)), constant_values=False), dtype=np.bool)
+        cy = np.array(np.pad(crust, ((0, 0), (1, 1), (0, 0)), constant_values=False), dtype=np.bool)
+        cz = np.array(np.pad(crust, ((0, 0), (0, 0), (1, 1)), constant_values=False), dtype=np.bool)
 
-            # Z-Neighbors
-            if neighbors[4]:
-                cz[:, :, 0] = neighbors[4].crust_voxels()[:, :, -1]
-            if neighbors[5]:
-                cz[:, :, -1] = neighbors[5].crust_voxels()[:, :, 0]
+        # X-Neighbors
+        if neighbors[0]:
+            cx[0, :, :] = neighbors[0].crust_voxels()[-1, :, :]
+        if neighbors[1]:
+            cx[-1, :, :] = neighbors[1].crust_voxels()[0, :, :]
 
-            dx = cx[1:, :, :] ^ cx[:-1, :, :]
-            dy = cy[:, 1:, :] ^ cy[:, :-1, :]
-            dz = cz[:, :, 1:] ^ cz[:, :, :-1]
+        # Y-Neighbors
+        if neighbors[2]:
+            cy[:, 0, :] = neighbors[2].crust_voxels()[:, -1, :]
+        if neighbors[3]:
+            cy[:, -1, :] = neighbors[3].crust_voxels()[:, 0, :]
 
-            ix = np.nonzero(dx)
-            iy = np.nonzero(dy)
-            iz = np.nonzero(dz)
+        # Z-Neighbors
+        if neighbors[4]:
+            cz[:, :, 0] = neighbors[4].crust_voxels()[:, :, -1]
+        if neighbors[5]:
+            cz[:, :, -1] = neighbors[5].crust_voxels()[:, :, 0]
 
-            vx = [np.array([(0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1)]) + f for f, d in zip(np.transpose(ix), dx[ix])]
-            fx = [(np.array([(0, 1, 2), (3, 2, 1)]) if d >= 0 else np.array([(3, 2, 1), (0, 1, 2)])) + (n * 4)
-                  for n, d in enumerate(dx[ix])]
+        dx = cx[1:, :, :] ^ cx[:-1, :, :]
+        dy = cy[:, 1:, :] ^ cy[:, :-1, :]
+        dz = cz[:, :, 1:] ^ cz[:, :, :-1]
 
-            vy = [np.array([(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)]) + f for f, d in zip(np.transpose(iy), dy[iy])]
-            fy = [(np.array([(0, 1, 2), (3, 2, 1)]) if d >= 0 else np.array([(3, 2, 1), (0, 1, 2)])) + (n * 4)
-                  for n, d in enumerate(dy[iy])]
+        ix = np.nonzero(dx)
+        iy = np.nonzero(dy)
+        iz = np.nonzero(dz)
 
-            vz = [np.array([(0, 0, 0), (0, 1, 0), (1, 0, 0), (1, 1, 0)]) + f for f, d in zip(np.transpose(iz), dz[iz])]
-            fz = [(np.array([(0, 1, 2), (3, 2, 1)]) if d >= 0 else np.array([(3, 2, 1), (0, 1, 2)])) + (n * 4)
-                  for n, d in enumerate(dz[iz])]
+        vx = [np.array([(0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1)]) + f for f, d in zip(np.transpose(ix), dx[ix])]
+        fx = [(np.array([(0, 1, 2), (3, 2, 1)]) if d >= 0 else np.array([(3, 2, 1), (0, 1, 2)])) + (n * 4)
+              for n, d in enumerate(dx[ix])]
 
-            # vvx = np.vstack(vx)
-            # vvy = np.vstack(vy)
-            # vvz = np.vstack(vz)
+        vy = [np.array([(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)]) + f for f, d in zip(np.transpose(iy), dy[iy])]
+        fy = [(np.array([(0, 1, 2), (3, 2, 1)]) if d >= 0 else np.array([(3, 2, 1), (0, 1, 2)])) + (n * 4)
+              for n, d in enumerate(dy[iy])]
 
-            # vertices = np.vstack((vvx, vvy, vvz)) + chunk.index * ChunkSize
-            # faces = np.vstack((
-            #     np.vstack(fx),
-            #     np.vstack(fy) + len(vvx),
-            #     np.vstack(fz) + len(vvx) + len(vvy)
-            # ))
-            # vertices, inv = np.unique(vertices, return_inverse=True, axis=0)
-            # faces = inv[faces]
-            # return vertices, faces
-            vertices, faces = cls.reduce_mesh([np.vstack(vx), np.vstack(vy), np.vstack(vz)],
-                                              [np.vstack(fx), np.vstack(fy), np.vstack(fz)])
+        vz = [np.array([(0, 0, 0), (0, 1, 0), (1, 0, 0), (1, 1, 0)]) + f for f, d in zip(np.transpose(iz), dz[iz])]
+        fz = [(np.array([(0, 1, 2), (3, 2, 1)]) if d >= 0 else np.array([(3, 2, 1), (0, 1, 2)])) + (n * 4)
+              for n, d in enumerate(dz[iz])]
 
-            return vertices + chunk.index * ChunkSize, faces
+        # vvx = np.vstack(vx)
+        # vvy = np.vstack(vy)
+        # vvz = np.vstack(vz)
 
-        elif bool(chunk.crust):
-            vertices = np.array([
-                (0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1),
-                (1, 0, 0), (1, 0, 1), (1, 1, 0), (1, 1, 1)
-            ], dtype=np.float) * ChunkSize
-            faces = np.array([
-                (0, 1, 2), (3, 2, 1),  # Face
-                (2, 3, 6), (7, 6, 3),  #
-                (3, 1, 7), (5, 7, 1),  #
-                (7, 5, 6), (4, 6, 5),  #
-                (5, 1, 4), (0, 4, 1),  #
-                (4, 0, 6), (2, 6, 0)
-            ], dtype=np.int)
-            return vertices, faces
-        else:
-            raise RuntimeError("invalid chunk distance")
+        # vertices = np.vstack((vvx, vvy, vvz)) + chunk.index * ChunkSize
+        # faces = np.vstack((
+        #     np.vstack(fx),
+        #     np.vstack(fy) + len(vvx),
+        #     np.vstack(fz) + len(vvx) + len(vvy)
+        # ))
+        # vertices, inv = np.unique(vertices, return_inverse=True, axis=0)
+        # faces = inv[faces]
+        # return vertices, faces
+        vertices, faces = cls.reduce_mesh([np.vstack(v) for v in (vx, vy, vz) if v],
+                                          [np.vstack(f) for f in (fx, fy, fz) if f])
+        return vertices + chunk.index * ChunkSize, faces
 
     @classmethod
     def grid_to_voxel_mesh(cls, grid: ChunkGrid, verbose=True):
@@ -169,10 +170,12 @@ if __name__ == '__main__':
     from model_pts import PtsModelLoader
 
     # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
-    data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
+    # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
+    data = MeshModelLoader(samples=30000, noise=0.1).load("models/cat/cat_reference.obj")
+
     data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
 
-    grid = ChunkGrid(512)
+    grid = ChunkGrid(64)
     scaled = (data - data_min) / np.max(data_max - data_min) * grid.resolution
     assert scaled.shape[1] == 3
 
