@@ -118,6 +118,7 @@ class PlyModelLoader(ModelLoader):
         return folder.transform.apply(np.concatenate(pts))
 
     def load_cache(self, path: str):
+        fname = os.path.basename(path)
         conf = ScanFolder.read_conf_file(path)
         h = hashlib.sha256()
         h.update(path.encode('utf-8'))
@@ -126,8 +127,10 @@ class PlyModelLoader(ModelLoader):
 
         file = os.path.join(".cache", f"{key}_ply.npy")
         if os.path.isfile(file):
+            print(f"Loading {fname} from Cache...")
             data = np.load(file, allow_pickle=False)
         else:
+            print(f"Loading {fname} from File...")
             data = self.load_file(path)
             os.makedirs(".cache")
             np.save(file, data, allow_pickle=False)
