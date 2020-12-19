@@ -1,8 +1,9 @@
-from typing import Optional, Tuple, Dict, Union, Iterator
-from scipy.ndimage import binary_dilation
+from typing import Optional, Tuple, Union, Iterator
 
 import numpy as np
+from scipy.ndimage import binary_dilation
 
+from data.index_dict import IndexDict
 from mathlib import Vec3i
 
 ChunkIndex = Tuple[int, int, int]
@@ -11,6 +12,8 @@ ChunkShape = (ChunkSize, ChunkSize, ChunkSize)
 
 
 class Chunk:
+    __slots__ = ['index', 'color', 'distance', 'crust']
+
     def __init__(self, index: ChunkIndex):
         self.index = np.array(index, dtype=np.int)
         self.color: Optional[Union[int, np.ndarray]] = None
@@ -57,9 +60,6 @@ class Chunk:
             raise RuntimeError("invalid distance type")
 
     def _inner_index(self, pos: Vec3i) -> Tuple[int, int, int]:
-        # if not (result < ChunkShape).all():
-        #     print("WOW")
-        # assert ((0, 0, 0) <= result).all() and (result < ChunkShape).all()
         return tuple(np.asarray(pos, dtype=np.int) % ChunkShape)
 
     def to_points(self) -> np.ndarray:
@@ -99,38 +99,27 @@ class Chunk:
             raise RuntimeError("invalid crust type")
 
 
-class ChunkGrid:
+
+
+class ChunkData:
     def __init__(self, resolution: int = 32):
         assert resolution % ChunkSize == 0
         self.size = resolution // ChunkSize
-        self.chunks: Dict[ChunkIndex, Chunk] = dict()
+        self.chunks: IndexDict[Chunk] = IndexDict()
 
     @property
     def resolution(self) -> int:
         return self.size * ChunkSize
 
-    def __getitem__(self, index) -> Optional[Chunk]:
-        assert len(index) == 3
-        key = tuple(index)
-        return self.chunks.get(key, None)
-
-    def get_chunk_by_index(self, index: Vec3i) -> Optional[Chunk]:
+    def chunk(self, index: Vec3i) -> Optional[Chunk]:
         return self.chunks.get(tuple(index), None)
 
-    def get_chunk(self, pos: Vec3i) -> Optional[Chunk]:
-        return self.get_chunk_by_index(self.index(pos))
-
-    def validate_pos(self, pos: Vec3i):
-        res = self.resolution
-        assert ((0, 0, 0) <= pos).all() and (pos < (res, res, res)).all()
-
-    def validate_index(self, index: Vec3i):
-        s = self.size
-        assert ((0, 0, 0) <= index).all() and (index < (s, s, s)).all()
+    def pos(self, pos: Vec3i) -> Optional[Chunk]:
+        return self.chunk(self.index(pos))
 
     def index(self, pos: Vec3i) -> ChunkIndex:
         indx = np.asarray(pos, dtype=int) // ChunkSize
-        self.validate_pos(indx)
+
         return tuple(indx)
 
     def index_to_pos(self, index: ChunkIndex) -> Vec3i:
@@ -162,7 +151,7 @@ class ChunkGrid:
                 yield c
 
 
-def dilate(grid: ChunkGrid):
+def dilate(grid: ChunkData):
     def set_crust(index_chunk: Vec3i, index_neighbor: Vec3i, axis: int, crust_segment: np.ndarray, index_crust: int):
         def get_index(axis, axis_val, i, j):
             a = [i, j]
@@ -220,13 +209,13 @@ def dilate(grid: ChunkGrid):
 
 
 if __name__ == '__main__':
-    from model_pts import PtsModelLoader
-    from cloud_render import CloudRender
+    from model.model_pts import PtsModelLoader
+    from render_cloud import CloudRender
 
     data = PtsModelLoader().load("models/bunny/bunnyData.pts")
     data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
 
-    g = ChunkGrid(16)
+    g = ChunkData(16)
     scaled = (data - data_min) / np.max(data_max - data_min) * g.resolution
 
     for p in scaled:

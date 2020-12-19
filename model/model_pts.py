@@ -1,6 +1,7 @@
-from model import ModelLoader
 import numpy as np
 import os
+
+from model.model import ModelLoader
 
 
 class PtsModelLoader(ModelLoader):
@@ -21,7 +22,7 @@ class PtsModelLoader(ModelLoader):
 
 
 if __name__ == '__main__':
-    from cloud_render import CloudRender
+    from render_cloud import CloudRender
 
-    data = PtsModelLoader().load("models/bunny/bunnyData.pts")
+    data = PtsModelLoader().load("../models/bunny/bunnyData.pts")
     CloudRender.plot(data).show()

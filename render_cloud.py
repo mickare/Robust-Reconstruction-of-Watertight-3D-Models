@@ -1,10 +1,9 @@
-from typing import Sequence, Tuple
+from typing import Tuple
 
 import numpy as np
 import plotly.graph_objects as go
-import tqdm
 
-from model_mesh import MeshModelLoader
+from model.model_mesh import MeshModelLoader
 from utils import merge_default
 
 

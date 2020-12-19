@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 import tqdm
 
 from mathlib import quaternion_rotation_matrix
-from model import ModelLoader
+from model.model import ModelLoader
 
 
 class Transform:
@@ -125,14 +125,14 @@ class PlyModelLoader(ModelLoader):
         h.update("\n".join(conf).encode('utf-8'))
         key = h.hexdigest()
 
-        file = os.path.join(".cache", f"{key}_ply.npy")
+        file = os.path.join("../.cache", f"{key}_ply.npy")
         if os.path.isfile(file):
             print(f"Loading {fname} from Cache...")
             data = np.load(file, allow_pickle=False)
         else:
             print(f"Loading {fname} from File...")
             data = self.load_file(path)
-            os.makedirs(".cache")
+            os.makedirs("../.cache")
             np.save(file, data, allow_pickle=False)
 
         return data
@@ -145,7 +145,7 @@ def plot_dragon():
     import plotly.graph_objects as go
     import tqdm
 
-    scans = ScanFolder.load_ply_conf("models/dragon_stand/dragonStandRight.conf")
+    scans = ScanFolder.load_ply_conf("../models/dragon_stand/dragonStandRight.conf")
 
     fig = go.Figure(
         data=[
