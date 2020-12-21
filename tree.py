@@ -28,9 +28,10 @@ def dilate(grid: ChunkGrid[int]):
         c.crust = c_crust
 
     for chunk in grid.chunks:
-        crust = grid.get_chunk_by_index(chunk).crust
-        if isinstance(crust, np.ndarray):
-            grid.get_chunk_by_index(chunk).crust = binary_dilation(crust)
+        if chunk.type == ChunkType.ARRAY:
+            chunk.set_array(binary_dilation(chunk.value))
+
+
     grid_chunks = grid.chunks.copy()
     for chunk in grid_chunks:
         crust = grid.get_chunk_by_index(chunk).crust
@@ -74,12 +75,19 @@ def flood_fill(grid: ChunkGrid):
         color += 1
 
 
+def find_empty_chunk(grid: ChunkGrid[int], value: int):
+    for chunk in grid.chunks:
+        if chunk.empty():
+            return chunk
+
 def flood_fill_recursive(grid: ChunkGrid, color: int):
+    # Find start chunk
     current_chunk = None
     for chunk in grid.chunks:
-        crust = grid.get_chunk_by_index(chunk).crust
-        if not isinstance(crust, np.ndarray):
-            if not crust and not grid.get_chunk_by_index(chunk).color:
+        if chunk.empty():
+            current_chunk = chunk
+        if chunk.type == ChunkType.ARRAY:
+            if not chunk.value and not chunk.color:
                 current_chunk = chunk
         else:
             c_color = grid.get_chunk_by_index(chunk).color_voxels()
@@ -93,6 +101,8 @@ def flood_fill_recursive(grid: ChunkGrid, color: int):
                 current_chunk = chunk
         if current_chunk:
             break
+
+
     if not current_chunk:
         return False
     chunk_queue = []
@@ -180,29 +190,33 @@ def flood_fill_border(grid: ChunkGrid, source_chunk_index: Vec3i, target_chunk_i
 if __name__ == '__main__':
     from model.model_pts import PtsModelLoader
     from render_cloud import CloudRender
+    from render_voxel import VoxelRender
 
+    # data = MeshModelLoader(samples=30000, noise=0.1).load("models/cat/cat_reference.obj")
     data = PtsModelLoader().load("models/bunny/bunnyData.pts")
+
     data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
+    data_delta_max = np.max(data_max - data_min)
 
-    g = ChunkData(16)
-    scaled = (data - data_min) / np.max(data_max - data_min) * g.resolution
+    resolution = 32
 
+    scaled = (data - data_min) * resolution / data_delta_max
+    assert scaled.shape[1] == 3
+
+    grid: ChunkGrid[int] = ChunkGrid(8, empty_value=0)
     for p in scaled:
         pos = np.array(p, dtype=int)
-        c = g.create_if_absent(pos)
-        c.set_distance(pos, 0)
-        c.set_crust(pos, True)
-
-    assert scaled.shape[1] == 3
-    pts = g.crust_to_points() + 0.5
-    assert pts.shape[1] == 3
-    fig = CloudRender().plot(scaled, pts, size=1)
-    fig.show()
+        c = grid.ensure_chunk_at_pos(pos)
+        c.set_pos(pos, 1)
 
     # Dilation
-    dilate(g)
-    pts = g.crust_to_points() + 0.5
-    fig = CloudRender().plot(scaled, pts, size=1)
+    dilate(grid)
+
+    ren = VoxelRender()
+    fig = ren.make_figure()
+    fig.add_trace(ren.make_mesh(grid, opacity=0.4, flatshading=True, voxel_kwargs=dict(value=1)))
+    # fig.add_trace(ren.make_mesh(grid, opacity=0.4, flatshading=True, voxel_kwargs=dict(value=2)))
+    fig.add_trace(CloudRender().make_scatter(scaled, marker=dict(size=0.5)))
     fig.show()
 
     # Flood filling
