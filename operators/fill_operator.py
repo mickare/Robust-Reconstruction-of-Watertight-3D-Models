@@ -239,5 +239,5 @@ def flood_fill_at(position: Vec3i, mask: ChunkGrid,
                   max_steps: Optional[int] = None, workers: Union[bool, int] = False, verbose=False,
                   **kwargs) -> ChunkGrid[bool]:
     image = ChunkGrid(mask.chunk_size, bool, False)
-    image.set_pos(position, True)
+    image.set_or_fill(position, True)
     return flood_fill(image, mask, max_steps, workers, verbose=verbose, **kwargs)
