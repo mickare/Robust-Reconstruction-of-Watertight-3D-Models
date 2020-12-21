@@ -273,7 +273,7 @@ class Chunk(Generic[V]):
     def any(self) -> bool:
         return np.any(self._value)
 
-    def padding(self, grid: "ChunkGrid[V]", padding: int, corners=False):
+    def padding(self, grid: "ChunkGrid[V]", padding: int, corners=False) -> np.ndarray:
         arr = np.pad(self.to_array(), padding)
         for face, index in grid.iter_neighbors_indicies(self._index):
             c = grid.ensure_chunk_at_index(index, insert=False)
