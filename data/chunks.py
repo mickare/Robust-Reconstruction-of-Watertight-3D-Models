@@ -369,7 +369,7 @@ class ChunkGrid(Generic[V]):
         return self.chunks.create_if_absent(index, self._new_chunk_factory, insert=insert)
 
     def ensure_chunk_at_pos(self, pos: Vec3i, insert=True) -> Chunk[V]:
-        return self.ensure_chunk_at_index(self.chunk_index(pos), *, insert=insert)
+        return self.ensure_chunk_at_index(self.chunk_index(pos), insert=insert)
 
     def empty_mask(self, default=False) -> np.ndarray:
         return np.full(self.chunk_shape, default, dtype=np.bool)
