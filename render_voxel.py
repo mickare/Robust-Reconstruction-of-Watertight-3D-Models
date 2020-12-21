@@ -4,9 +4,8 @@ import numpy as np
 import plotly.graph_objects as go
 import tqdm
 
-from data.chunks import Chunk, ChunkGrid, ChunkType, ChunkFace
 from mathlib import Vec3f
-from operators.fill_operator import FillOperator
+from data.chunks import Chunk, ChunkGrid, ChunkFace
 
 
 class MeshHelper:
@@ -99,7 +98,7 @@ class MeshHelper:
 
         if not chunk.any():
             return np.empty((0, 3), dtype=np.float), np.empty((0, 3), dtype=np.int)
-        elif chunk.type == ChunkType.FILL:
+        elif chunk.is_filled():
             vertices = np.array([
                 (0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1),
                 (1, 0, 0), (1, 0, 1), (1, 1, 0), (1, 1, 1)
@@ -113,7 +112,7 @@ class MeshHelper:
                 (4, 0, 6), (2, 6, 0)
             ], dtype=np.int)
             return vertices + chunk.index * chunk.size, faces
-        elif chunk.type == ChunkType.ARRAY:
+        else:
             neighbors: List[Optional[Chunk]] = [None] * 6
             if parent is not None:
                 neighbors = [c for f, c in parent.iter_neighbors(chunk.index, flatten=False)]
@@ -121,8 +120,6 @@ class MeshHelper:
 
             vertices, faces = cls.extract_voxel_mesh(chunk.to_array(), neighbors=neighbors)
             return vertices + chunk.index * chunk.size, faces
-        # else empty
-        return np.empty((0, 3), dtype=np.float), np.empty((0, 3), dtype=np.int)
 
     @classmethod
     def grid_to_voxel_mesh(cls, grid: ChunkGrid, verbose=True):
@@ -233,6 +230,9 @@ if __name__ == '__main__':
     from render_cloud import CloudRender
     from model.model_mesh import MeshModelLoader
     from model.model_pts import PtsModelLoader
+    from model.model_ply import PlyModelLoader
+    from data.chunks import Chunk, ChunkGrid
+    from operators.fill_operator import FloodFillOperator, flood_fill_at
 
     data = PtsModelLoader().load("models/bunny/bunnyData.pts")
     # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
@@ -241,9 +241,9 @@ if __name__ == '__main__':
     data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
     data_delta_max = np.max(data_max - data_min)
 
-    resolution = 32
+    resolution = 64
 
-    grid = ChunkGrid(8, dtype=int, empty_value=0)
+    grid = ChunkGrid(16, dtype=int, empty_value=0)
     scaled = (data - data_min) * resolution / data_delta_max
     assert scaled.shape[1] == 3
 
@@ -260,18 +260,13 @@ if __name__ == '__main__':
     for e in extra:
         grid.ensure_chunk_at_index(e)
 
-    fill = FillOperator(grid==0)
-    # c = grid.ensure_chunk_at_pos((7, 9, 7))
-    # c.set_fill(2)
-    masks = fill.fill_masks((7, 9, 7))
-
-    for m in masks.values():
-        m.apply(grid.ensure_chunk_at_index(m.index), 3)
+    fill_mask = flood_fill_at((7, 9, 7), grid == 0)
+    grid[fill_mask] = 3
 
     ren = VoxelRender()
     fig = ren.make_figure()
-    fig.add_trace(ren.grid_voxel(grid == 1, opacity=1.0, flatshading=True))
-    # fig.add_trace(ren.grid_voxel(grid == 3, opacity=0.1, flatshading=True))
+    fig.add_trace(ren.grid_voxel(grid == 1, opacity=0.5, flatshading=True))
+    fig.add_trace(ren.grid_voxel(grid == 3, opacity=0.1, flatshading=True))
     # array, offset = (grid == 1).to_sparse()
     # fig.add_trace(ren.dense_voxel(array.todense(), offset=offset+(0,0,20), opacity=0.5, flatshading=True))
     fig.add_trace(CloudRender().make_scatter(scaled, marker=dict(size=0.5)))
