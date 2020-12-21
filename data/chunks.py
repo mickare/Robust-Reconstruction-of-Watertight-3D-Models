@@ -683,3 +683,32 @@ class ChunkGrid(Generic[V]):
     __itruediv__ = itruediv
     __ifloordiv__ = ifloordiv
     __imod__ = imod
+
+    def pad_chunks(self, width: int = 1):
+        visited: Set[ChunkIndex] = set()
+        for s in range(0, width):
+            extra: Set[ChunkIndex] = set(tuple(n) for i in self.chunks.keys()
+                                         for f, n in self.iter_neighbors_indicies(i))
+            extra = extra.difference(visited)
+            for e in extra:
+                self.ensure_chunk_at_index(e)
+            visited.update(extra)
+
+    def hull(self) -> Iterator[Chunk[V]]:
+        """Some of the outer chunks that represent a hull around all chunks"""
+        if self.chunks:
+            it = self.chunks.sliced_iterator()
+            for x in it.x.range():
+                for y in it.y.range():
+                    for z in it.z.range():
+                        c = self.chunks.get((x, y, z), None)
+                        if c is not None:
+                            yield c
+                            break
+            for x in reversed(it.x.range()):
+                for y in reversed(it.y.range()):
+                    for z in reversed(it.z.range()):
+                        c = self.chunks.get((x, y, z), None)
+                        if c is not None:
+                            yield c
+                            break
