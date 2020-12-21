@@ -16,9 +16,9 @@ if __name__ == '__main__':
     data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
     data_delta_max = np.max(data_max - data_min)
 
-    resolution = 64
+    resolution = 32
 
-    grid = ChunkGrid(16, dtype=int, empty_value=0)
+    grid = ChunkGrid(16, dtype=int, fill_value=0)
     scaled = (data - data_min) * resolution / data_delta_max
     assert scaled.shape[1] == 3
 
@@ -33,14 +33,14 @@ if __name__ == '__main__':
     for e in extra:
         grid.ensure_chunk_at_index(e)
 
-    fill_mask = flood_fill_at((7, 9, 7), grid == 0)
+    fill_mask = flood_fill_at((1,1,1), grid == 0)
     grid[fill_mask] = 3
 
     ren = VoxelRender()
     fig = ren.make_figure()
     fig.add_trace(ren.grid_voxel(grid == 1, opacity=0.5, flatshading=True))
     fig.add_trace(ren.grid_voxel(grid == 2, opacity=0.1, flatshading=True))
-    # fig.add_trace(ren.grid_voxel(grid == 3, opacity=0.1, flatshading=True))
+    fig.add_trace(ren.grid_voxel(grid == 3, opacity=0.1, flatshading=True))
     # array, offset = (grid == 1).to_sparse()
     # fig.add_trace(ren.dense_voxel(array.todense(), offset=offset+(0,0,20), opacity=0.5, flatshading=True))
     fig.add_trace(CloudRender().make_scatter(scaled, marker=dict(size=0.5)))

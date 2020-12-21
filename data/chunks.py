@@ -76,13 +76,13 @@ class BetterPartialMethod(functools.partialmethod):
 
 
 class Chunk(Generic[V]):
-    def __init__(self, index: Vec3i, size: int, dtype: Optional[Type[V]] = None, empty_value: Optional[V] = None):
+    def __init__(self, index: Vec3i, size: int, dtype: Optional[Type[V]] = None, fill_value: Optional[V] = None):
         self._index: Vec3i = np.asarray(index, dtype=np.int)
         self._size = size
         self._dtype = np.dtype(dtype).type
-        self._empty_value = self._dtype() if empty_value is None else self._dtype(empty_value)
+        self._fill_value = self._dtype() if fill_value is None else self._dtype(fill_value)
         self._is_filled = True
-        self._value: Union[V, np.ndarray] = self._empty_value
+        self._value: Union[V, np.ndarray] = self._fill_value
 
     @property
     def index(self) -> Vec3i:
@@ -130,7 +130,7 @@ class Chunk(Generic[V]):
         self._is_filled = False
         return self
 
-    def to_array(self):
+    def to_array(self) -> np.ndarray:
         if self._is_filled:
             return np.full(self.shape, self._value, dtype=self._dtype)
         else:
@@ -142,7 +142,7 @@ class Chunk(Generic[V]):
         if other.is_filled() and other._value:
             c.set_fill(self._value)
         else:
-            arr = np.full(self.shape, self._empty_value, dtype=self._dtype)
+            arr = np.full(self.shape, self._fill_value, dtype=self._dtype)
             arr[other._value] = self._value[other._value]
             c.set_array(arr)
         return c
@@ -163,7 +163,7 @@ class Chunk(Generic[V]):
         self.cleanup_memory()
 
     def copy(self, empty=False):
-        c = Chunk(self._index, self._size, dtype=self._dtype, empty_value=self._empty_value)
+        c = Chunk(self._index, self._size, dtype=self._dtype, fill_value=self._fill_value)
         if not empty:
             if self.is_filled():
                 c.set_fill(self._value)
@@ -186,7 +186,7 @@ class Chunk(Generic[V]):
 
         for offset in ChunkHelper.indexGrid[:splits]:
             new_index = np.add(self._index * splits, offset)
-            c = Chunk(new_index, size=chunk_size, empty_value=self._empty_value)
+            c = Chunk(new_index, size=chunk_size, fill_value=self._fill_value)
             if self.is_filled():
                 c.set_fill(self._value)
             else:
@@ -201,7 +201,7 @@ class Chunk(Generic[V]):
 
     def convert(self, func: Callable[[V], M], func_vec: Optional[Callable[[np.ndarray], np.ndarray]]) -> "Chunk[M]":
         func_vec = func_vec or np.vectorize(func)
-        c = Chunk(self._index, self._size, empty_value=func(self._empty_value))
+        c = Chunk(self._index, self._size, fill_value=func(self._fill_value))
         if self.is_filled():
             c.set_fill(func(self._value))
         else:
@@ -211,7 +211,7 @@ class Chunk(Generic[V]):
     def astype(self, dtype: Type[M]) -> "Chunk[M]":
         if self._dtype == dtype:
             return self
-        c = Chunk(self._index, self._size, dtype=dtype, empty_value=dtype(self._empty_value))
+        c = Chunk(self._index, self._size, dtype=dtype, fill_value=dtype(self._fill_value))
         if self.is_filled():
             c.set_fill(dtype(self._value))
         else:
@@ -326,11 +326,11 @@ class Chunk(Generic[V]):
 
 
 class ChunkGrid(Generic[V]):
-    def __init__(self, chunk_size: int = 8, dtype=None, empty_value: Optional[V] = None):
+    def __init__(self, chunk_size: int = 8, dtype=None, fill_value: Optional[V] = None):
         assert chunk_size > 0
         self._chunk_size = chunk_size
         self._dtype = np.dtype(dtype).type
-        self._empty_value = self._dtype() if empty_value is None else self._dtype(empty_value)
+        self._fill_value = self._dtype() if fill_value is None else self._dtype(fill_value)
         self.chunks: IndexDict[Chunk[V]] = IndexDict()
 
     @property
@@ -347,8 +347,8 @@ class ChunkGrid(Generic[V]):
         return s, s, s
 
     @property
-    def empty_value(self) -> V:
-        return self._empty_value
+    def fill_value(self) -> V:
+        return self._fill_value
 
     def size(self):
         index_min, index_max = self.chunks.minmax()
@@ -357,20 +357,20 @@ class ChunkGrid(Generic[V]):
     def astype(self, dtype: Type[M]) -> "ChunkGrid[M]":
         if self._dtype == dtype:
             return self
-        grid_new: ChunkGrid[M] = ChunkGrid(self._chunk_size, dtype, empty_value=dtype(self._empty_value))
+        grid_new: ChunkGrid[M] = ChunkGrid(self._chunk_size, dtype, fill_value=dtype(self._fill_value))
         for src in self.chunks.values():
             grid_new.chunks.insert(src.index, src.astype(dtype))
         return grid_new
 
     def convert(self, func: Callable[[V], M]) -> "ChunkGrid[M]":
         func_vec = np.vectorize(func)
-        grid_new: ChunkGrid[M] = ChunkGrid(self._chunk_size, empty_value=func(self._empty_value))
+        grid_new: ChunkGrid[M] = ChunkGrid(self._chunk_size, fill_value=func(self._fill_value))
         for src in self.chunks:
             grid_new.chunks.insert(src.index, src.convert(func, func_vec))
         return grid_new
 
     def copy(self, empty=False):
-        new = ChunkGrid(self._chunk_size, self._dtype, self._empty_value)
+        new = ChunkGrid(self._chunk_size, self._dtype, self._fill_value)
         if not empty:
             for src in self.chunks.values():
                 new.chunks.insert(src.index, src.copy())
@@ -379,14 +379,14 @@ class ChunkGrid(Generic[V]):
     def split(self, splits: int, chunk_size: Optional[int] = None) -> "ChunkGrid[V]":
         assert splits > 0 and self._chunk_size % splits == 0
         chunk_size = chunk_size or self._chunk_size
-        grid_new: ChunkGrid[V] = ChunkGrid(chunk_size, self._dtype, self._empty_value)
+        grid_new: ChunkGrid[V] = ChunkGrid(chunk_size, self._dtype, self._fill_value)
         for c in self.chunks.values():
             for c_new in c.split(splits, chunk_size):
                 grid_new.chunks.insert(c_new.index, c_new)
         return grid_new
 
     def _new_chunk_factory(self, index: Index):
-        return Chunk(index, self._chunk_size, self._dtype, self._empty_value)
+        return Chunk(index, self._chunk_size, self._dtype, self._fill_value)
 
     def chunk_index(self, pos: Vec3i):
         return np.asarray(pos, dtype=np.int) // self._chunk_size
@@ -438,7 +438,7 @@ class ChunkGrid(Generic[V]):
         chunk_max = it.stop // cs
         chunk_len = chunk_max - chunk_min
 
-        arr = sparse.DOK(tuple(chunk_len * cs), fill_value=self._empty_value, dtype=self.dtype)
+        arr = sparse.DOK(tuple(chunk_len * cs), fill_value=self._fill_value, dtype=self.dtype)
         for c in self.chunks.values():
             if np.all(chunk_min <= c.index) and np.all(c.index <= chunk_max):
                 u, v, w = (c.index - chunk_min) * cs
@@ -551,7 +551,7 @@ class ChunkGrid(Generic[V]):
                 c.invert(inplace=True)
             return self
         else:
-            new_grid: ChunkGrid[V] = ChunkGrid(self._chunk_size, dtype=self._dtype, empty_value=False)
+            new_grid: ChunkGrid[V] = ChunkGrid(self._chunk_size, dtype=self._dtype, fill_value=False)
             for i, c in self.chunks.items():
                 new_grid.chunks.insert(i, c.invert())
             return new_grid
@@ -609,8 +609,8 @@ class ChunkGrid(Generic[V]):
     imod = BetterPartialMethod(_operator, op=Chunk.imod, dtype=bool, inplace=True)
 
     # Set alternative opertator methods names
-    __eq__ = eq
-    __ne__ = ne
+    __eq__ = eq  # type: ChunkGrid
+    __ne__ = ne  # type: ChunkGrid
 
     __abs__ = abs
     __add__ = add

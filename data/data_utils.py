@@ -11,6 +11,8 @@ SliceOpt = Union[int, slice, None]
 def to_slice(s: SliceOpt = None) -> slice:
     if isinstance(s, slice):
         return s
+    if s is None:
+        return slice(s)
     return slice(s, s + 1)
 
 

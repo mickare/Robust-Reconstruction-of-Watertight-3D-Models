@@ -208,7 +208,7 @@ if __name__ == '__main__':
 
     resolution = 64
 
-    grid = ChunkGrid(16, dtype=int, empty_value=0)
+    grid = ChunkGrid(16, dtype=int, fill_value=0)
     scaled = (data - data_min) * resolution / data_delta_max
     assert scaled.shape[1] == 3
 

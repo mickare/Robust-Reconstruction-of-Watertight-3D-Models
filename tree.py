@@ -143,7 +143,7 @@ if __name__ == '__main__':
     scaled = (data - data_min) * resolution / data_delta_max
     assert scaled.shape[1] == 3
 
-    grid: ChunkGrid[int] = ChunkGrid(8, empty_value=0)
+    grid: ChunkGrid[int] = ChunkGrid(8, fill_value=0)
     for p in scaled:
         pos = np.array(p, dtype=int)
         c = grid.ensure_chunk_at_pos(pos)

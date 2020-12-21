@@ -117,6 +117,7 @@ class FloodFillOperator:
             if t.index in visited:
                 continue
             visited.add(t.index)
+
             m: Chunk = self.mask.chunks.get(t.index, None)
             if m is not None:
                 if m.is_filled():
@@ -187,7 +188,7 @@ class FloodFillOperator:
         assert max_steps > 0
         # Results
         tasks = list(tasks)
-        output = ChunkGrid(self.mask.chunk_size, dtype=bool, empty_value=False) if output is None else output
+        output = ChunkGrid(self.mask.chunk_size, dtype=bool, fill_value=False) if output is None else output
         assert output.chunk_size == self.mask.chunk_size
 
         if not tasks:
