@@ -330,21 +330,21 @@ class ChunkGrid(Generic[V]):
             return self
         grid_new: ChunkGrid[M] = ChunkGrid(self._chunk_size, dtype, empty_value=dtype(self._empty_value))
         for src in self.chunks.values():
-            grid_new.chunks.set(src.index, src.astype(dtype))
+            grid_new.chunks.insert(src.index, src.astype(dtype))
         return grid_new
 
     def convert(self, func: Callable[[V], M]) -> "ChunkGrid[M]":
         func_vec = np.vectorize(func)
         grid_new: ChunkGrid[M] = ChunkGrid(self._chunk_size, empty_value=func(self._empty_value))
         for src in self.chunks:
-            grid_new.chunks.set(src.index, src.convert(func, func_vec))
+            grid_new.chunks.insert(src.index, src.convert(func, func_vec))
         return grid_new
 
     def copy(self, empty=False):
         new = ChunkGrid(self._chunk_size, self._dtype, self._empty_value)
         if not empty:
             for src in self.chunks.values():
-                new.chunks.set(src.index, src.copy())
+                new.chunks.insert(src.index, src.copy())
         return new
 
     def split(self, splits: int, chunk_size: Optional[int] = None) -> "ChunkGrid[V]":
@@ -353,7 +353,7 @@ class ChunkGrid(Generic[V]):
         grid_new: ChunkGrid[V] = ChunkGrid(chunk_size, self._dtype, self._empty_value)
         for c in self.chunks.values():
             for c_new in c.split(splits, chunk_size):
-                grid_new.chunks.set(c_new.index, c_new)
+                grid_new.chunks.insert(c_new.index, c_new)
         return grid_new
 
     def _new_chunk_factory(self, index: Index):
@@ -365,16 +365,16 @@ class ChunkGrid(Generic[V]):
     def chunk_at_pos(self, pos: Vec3i) -> Optional[Chunk[V]]:
         return self.chunks.get(self.chunk_index(pos))
 
-    def ensure_chunk_at_index(self, index: ChunkIndex) -> Chunk[V]:
-        return self.chunks.create_if_absent(index, self._new_chunk_factory)
+    def ensure_chunk_at_index(self, index: ChunkIndex, *, insert=True) -> Chunk[V]:
+        return self.chunks.create_if_absent(index, self._new_chunk_factory, insert=insert)
 
-    def ensure_chunk_at_pos(self, pos: Vec3i) -> Chunk[V]:
-        return self.ensure_chunk_at_index(self.chunk_index(pos))
+    def ensure_chunk_at_pos(self, pos: Vec3i, insert=True) -> Chunk[V]:
+        return self.ensure_chunk_at_index(self.chunk_index(pos), *, insert=insert)
 
     def empty_mask(self, default=False) -> np.ndarray:
         return np.full(self.chunk_shape, default, dtype=np.bool)
 
-    def iter_neighbors_indicies(self, index: ChunkIndex) -> Iterator[Tuple[ChunkFace, Index]]:
+    def iter_neighbors_indicies(self, index: ChunkIndex) -> Iterator[Tuple[ChunkFace, Vec3i]]:
         yield from ((f, np.add(index, f.direction)) for f in ChunkFace)
 
     def iter_neighbors(self, index: ChunkIndex, flatten=False) -> Iterator[Tuple[ChunkFace, Optional["Chunk"]]]:
@@ -393,11 +393,11 @@ class ChunkGrid(Generic[V]):
             for i, a in self.chunks.items():
                 b = other.chunks.get(i, None)
                 if b is not None:
-                    new_grid.chunks.set(i, a.equals(b))
+                    new_grid.chunks.insert(i, a.equals(b))
         else:
             new_grid: ChunkGrid[bool] = ChunkGrid(self._chunk_size, dtype=bool, empty_value=False)
             for i, a in self.chunks.items():
-                new_grid.chunks.set(i, a.equals(other))
+                new_grid.chunks.insert(i, a.equals(other))
         return new_grid
 
     def __eq__(self, other) -> "ChunkGrid[bool]":
@@ -418,7 +418,7 @@ class ChunkGrid(Generic[V]):
         else:
             new_grid: ChunkGrid[V] = ChunkGrid(self._chunk_size, dtype=self._dtype, empty_value=False)
             for i, c in self.chunks.items():
-                new_grid.chunks.set(i, c.invert())
+                new_grid.chunks.insert(i, c.invert())
             return new_grid
 
     def to_sparse(self, x: Union[int, slice, None] = None, y: Union[int, slice, None] = None,
@@ -457,7 +457,7 @@ class ChunkGrid(Generic[V]):
         for i, o in other.chunks.items():
             c = self.chunks.get(i, None)
             if c is not None and c.any():
-                result.chunks.set(i, c.where(o))
+                result.chunks.insert(i, c.where(o))
 
     def __getitem__(self, item):
         if isinstance(item, slice):

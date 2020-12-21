@@ -93,13 +93,13 @@ class IndexDict(Generic[T]):
         else:
             raise KeyError(f"invalid key {item}")
 
-    def set(self, index: Index, value: T):
+    def insert(self, index: Index, value: T):
         index = self.index(index)
         self._data[index] = value
         self._minmax.add(index)
 
     def __setitem__(self, key: Index, value: T):
-        self.set(key, value)
+        self.insert(key, value)
 
     def __contains__(self, item: Index) -> bool:
         return self.index(item) in self._data
@@ -113,13 +113,14 @@ class IndexDict(Generic[T]):
             return default
         return c
 
-    def create_if_absent(self, index: Index, factory: Callable[[Index], T]) -> T:
+    def create_if_absent(self, index: Index, factory: Callable[[Index], T], *, insert=True) -> T:
         index = self.index(index)
         c = self._data.get(index, None)
         if c is None:
             c = factory(index)
-            self._data[index] = c
-            self._minmax.add(index)
+            if insert:
+                self._data[index] = c
+                self._minmax.add(index)
         return c
 
     def __len__(self):
