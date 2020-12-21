@@ -19,12 +19,17 @@ def dilate(image: ChunkGrid[bool], mask: ChunkGrid[bool] = None) -> ChunkGrid[bo
     # Dilate inner chunk
     for r in result.chunks:
         tmp = ndimage.binary_dilation(r.to_array(), mask=mask.ensure_chunk_at_index(r.index, insert=False).to_array())
-
-        # Dilate chunk overflow
-        for f, c in image.iter_neighbors(r.index, flatten=True):
-            tmp[f.slice()] |= c.to_array()[f.flip().slice()]
-
         r.set_array(tmp)
-        r.cleanup_memory()
 
+    # Dilate chunk overflow
+    for index in list(result.chunks.keys()):
+        for f, n in result.iter_neighbors_indicies(index):
+            r_n = result.ensure_chunk_at_index(n)
+            m = mask.ensure_chunk_at_index(index, insert=False).to_array()
+            img = image.ensure_chunk_at_index(index, insert=False).to_array()
+            s0 = f.slice()
+            s1 = f.flip().slice()
+            r_n[s1] |= m[s0] & img[s0]
+
+            r_n.cleanup_memory()
     return result

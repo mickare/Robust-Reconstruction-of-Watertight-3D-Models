@@ -16,7 +16,7 @@ if __name__ == '__main__':
     data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
     data_delta_max = np.max(data_max - data_min)
 
-    resolution = 32
+    resolution = 64
 
     grid = ChunkGrid(16, dtype=int, fill_value=0)
     scaled = (data - data_min) * resolution / data_delta_max
@@ -24,7 +24,8 @@ if __name__ == '__main__':
 
     grid[scaled] = 1
 
-    dilated = dilate(grid == 1) & (grid != 1)
+    #dilated = dilate(grid == 1) & (grid != 1)
+    dilated = dilate(grid == 1)
     grid[dilated] = 2
 
     # Add padding
@@ -39,8 +40,8 @@ if __name__ == '__main__':
     ren = VoxelRender()
     fig = ren.make_figure()
     fig.add_trace(ren.grid_voxel(grid == 1, opacity=0.5, flatshading=True))
-    fig.add_trace(ren.grid_voxel(grid == 2, opacity=0.1, flatshading=True))
-    fig.add_trace(ren.grid_voxel(grid == 3, opacity=0.1, flatshading=True))
+    fig.add_trace(ren.grid_voxel(grid == 2, opacity=1.0, flatshading=True))
+    # fig.add_trace(ren.grid_voxel(grid == 3, opacity=0.1, flatshading=True))
     # array, offset = (grid == 1).to_sparse()
     # fig.add_trace(ren.dense_voxel(array.todense(), offset=offset+(0,0,20), opacity=0.5, flatshading=True))
     fig.add_trace(CloudRender().make_scatter(scaled, marker=dict(size=0.5)))

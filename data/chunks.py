@@ -567,7 +567,10 @@ class ChunkGrid(Generic[V]):
 
         if isinstance(other, ChunkGrid):
             assert new_grid._chunk_size == other._chunk_size
-            for i, a in self.chunks.items():
+            indices = set(self.chunks.keys())
+            indices.update(other.chunks.keys())
+            for i in indices:
+                a = new_grid.ensure_chunk_at_index(i)
                 b = other.ensure_chunk_at_index(i, insert=False)
                 new_chunk = op(a, b)
                 assert isinstance(new_chunk, Chunk)
