@@ -122,7 +122,7 @@ class MeshHelper:
             return vertices + chunk.index * chunk.size, faces
 
     @classmethod
-    def grid_to_voxel_mesh(cls, grid: ChunkGrid, verbose=True):
+    def grid_to_voxel_mesh(cls, grid: ChunkGrid, verbose=False):
         if verbose:
             chunks = tqdm.tqdm(grid.chunks, desc="Building voxel mesh")
         else:
@@ -146,7 +146,7 @@ class VoxelRender:
         vertices, faces = MeshHelper.extract_voxel_mesh(dense)
         return self.make_mesh(vertices, faces, **kwargs)
 
-    def grid_voxel(self, grid: ChunkGrid, verbose=True, **kwargs):
+    def grid_voxel(self, grid: ChunkGrid, verbose=False, **kwargs):
         vertices, faces = MeshHelper.grid_to_voxel_mesh(grid, verbose=verbose)
         return self.make_mesh(vertices, faces, **kwargs)
 
