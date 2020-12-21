@@ -56,10 +56,11 @@ if __name__ == '__main__':
         print(components)
         ren = VoxelRender()
         fig = ren.make_figure()
-        fig.add_trace(ren.grid_voxel(crust, opacity=0.5, flatshading=True, name='crust'))
+        fig.add_trace(ren.grid_voxel(crust, opacity=0.2, flatshading=True, name='crust'))
         for c in range(colors):
-            fig.add_trace(ren.grid_voxel(color == c, opacity=0.2, flatshading=True, name=str(c)))
+            if c == 2 or c == 1:
+                continue
+            fig.add_trace(ren.grid_voxel(color == c, opacity=1.0, flatshading=True, name=str(c)))
         fig.add_trace(CloudRender().make_scatter(scaled, marker=dict(size=0.5)))
         fig.show()
-        color = color == 1
-        color[color] = 1
+        color[color != 1] = 0
