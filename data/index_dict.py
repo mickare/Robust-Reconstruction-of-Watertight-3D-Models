@@ -57,6 +57,13 @@ class IndexDict(Generic[T]):
             else:
                 return [self._data[tuple(i)] for i in item]
 
+    def sliced_iterator(self, x: Union[int, slice, None] = None, y: Union[int, slice, None] = None,
+                        z: Union[int, slice, None] = None) -> PositionIter:
+        if not self._data:
+            return PositionIter.empty()
+        k_min, k_max = self.minmax()
+        return PositionIter(x, y, z, low=k_min, high=k_max + 1)
+
     def sliced(self, x: Union[int, slice, None] = None, y: Union[int, slice, None] = None,
                z: Union[int, slice, None] = None, ignore_empty=True) -> Iterator[T]:
         if not self._data:
@@ -64,8 +71,7 @@ class IndexDict(Generic[T]):
         if x is None and y is None and z is None:
             yield from self._data.values()
         else:
-            k_min, k_max = self.minmax()
-            it = PositionIter(x, y, z, length=k_max - k_min + 1, offset=k_min)
+            it = self.sliced_iterator(x, y, z)
             if ignore_empty:
                 for key in it:
                     if key in self._data:
