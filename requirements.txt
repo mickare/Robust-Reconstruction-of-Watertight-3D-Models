@@ -4,3 +4,4 @@ plyfile
 plotly
 tqdm
 PyWavefront
+sparse
