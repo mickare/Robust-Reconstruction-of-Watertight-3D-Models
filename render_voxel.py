@@ -4,8 +4,8 @@ import numpy as np
 import plotly.graph_objects as go
 import tqdm
 
-from mathlib import Vec3f
 from data.chunks import Chunk, ChunkGrid, ChunkFace
+from mathlib import Vec3f
 
 
 class MeshHelper:
@@ -196,47 +196,12 @@ class VoxelRender:
         return fig
 
 
-def plot_boolean_chunkgrid():
-    from render_cloud import CloudRender
-    from model.model_mesh import MeshModelLoader
-
-    # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
-    # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
-    data = MeshModelLoader(samples=30000, noise=0.1).load("models/cat/cat_reference.obj")
-
-    data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
-    data_delta_max = np.max(data_max - data_min)
-
-    resolution = 32
-
-    grid = ChunkGrid(8, empty_value=False)
-    scaled = (data - data_min) * resolution / data_delta_max
-    assert scaled.shape[1] == 3
-
-    for p in scaled:
-        pos = np.array(p, dtype=int)
-        c = grid.ensure_chunk_at_pos(pos)
-        c.set_pos(pos, True)
-
-    c = grid.ensure_chunk_at_pos((-2, -2, 0))
-    c.set_fill(True)
-
-    fig = VoxelRender().plot(grid, opacity=1.0, flatshading=True, voxel_kwargs=dict(logic=True))
-    fig.add_trace(CloudRender().make_scatter(scaled, marker=dict(size=0.5)))
-    fig.show()
-
-
 if __name__ == '__main__':
     from render_cloud import CloudRender
-    from model.model_mesh import MeshModelLoader
     from model.model_pts import PtsModelLoader
-    from model.model_ply import PlyModelLoader
-    from data.chunks import Chunk, ChunkGrid
-    from operators.fill_operator import FloodFillOperator, flood_fill_at
+    from operators.fill_operator import flood_fill_at
 
     data = PtsModelLoader().load("models/bunny/bunnyData.pts")
-    # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
-    # data = MeshModelLoader(samples=30000, noise=0.1).load("models/cat/cat_reference.obj")
 
     data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
     data_delta_max = np.max(data_max - data_min)
@@ -248,11 +213,6 @@ if __name__ == '__main__':
     assert scaled.shape[1] == 3
 
     grid[scaled] = 1
-
-    # for p in scaled:
-    #     pos = np.array(p, dtype=int)
-    #     c = grid.ensure_chunk_at_pos(pos)
-    #     c.set_pos(pos, 1)
 
     # Add padding
     filled = set(tuple(c.index) for c in grid.chunks)
@@ -267,7 +227,5 @@ if __name__ == '__main__':
     fig = ren.make_figure()
     fig.add_trace(ren.grid_voxel(grid == 1, opacity=0.5, flatshading=True))
     fig.add_trace(ren.grid_voxel(grid == 3, opacity=0.1, flatshading=True))
-    # array, offset = (grid == 1).to_sparse()
-    # fig.add_trace(ren.dense_voxel(array.todense(), offset=offset+(0,0,20), opacity=0.5, flatshading=True))
     fig.add_trace(CloudRender().make_scatter(scaled, marker=dict(size=0.5)))
     fig.show()
