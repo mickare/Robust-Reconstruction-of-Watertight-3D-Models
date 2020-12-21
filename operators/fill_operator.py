@@ -141,7 +141,7 @@ class FloodFillOperator:
     @classmethod
     def _merge_chunk_into(cls, src: Chunk[bool], dst: Chunk[bool]) -> bool:
         old = np.copy(dst.value)
-        dst.ior(src)
+        dst |= src
         return np.any(old != dst.value)
 
     def _iterate_fill(self, image: ChunkGrid[bool], tasks: List[FloodFillTask], max_steps: int,
