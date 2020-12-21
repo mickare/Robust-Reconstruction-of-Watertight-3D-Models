@@ -85,6 +85,10 @@ class PositionIter:
         assert z.start is not None and z.stop is not None
         return cls(x, y, z, low=(x.start, y.start, z.start), high=(x.stop, y.stop, z.stop))
 
+    @classmethod
+    def empty(cls):
+        return cls(0, 0, 0, np.zeros(3), np.zeros(3))
+
     def __init__(self, x: SliceOpt, y: SliceOpt, z: SliceOpt, low: Vec3i, high: Vec3i):
         self._low = np.asarray(low, dtype=int)
         self._high = np.asarray(high, dtype=int)
