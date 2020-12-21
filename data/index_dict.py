@@ -1,9 +1,10 @@
 from typing import Dict, Union, Tuple, Iterator, Optional, Iterable, Sequence, Generic, TypeVar, Callable, List, \
-    ItemsView, KeysView
+    ItemsView, KeysView, ValuesView
 
 import numpy as np
 
-from data.data_utils import MinMaxCheck, SliceIterator
+from data.data_utils import MinMaxCheck, PositionIter
+from mathlib import Vec3i
 
 T = TypeVar('T')
 Index = Tuple[int, int, int]
@@ -31,9 +32,15 @@ class IndexDict(Generic[T]):
             self._minmax.set_dirty()
         return c
 
-    def index(self, item: IndexUnion) -> Index:
+    def minmax(self) -> Tuple[Vec3i, Vec3i]:
+        """ Returns the min and max index of all contained indices"""
+        return self._minmax.safe(self._data.keys)
+
+    @classmethod
+    def index(cls, item: IndexUnion) -> Index:
         item = np.asarray(item, dtype=np.int)
-        assert item.shape == (3,)
+        if item.shape != (3,):
+            raise IndexError(f"Invalid index {item}")
         return tuple(item)
 
     def get(self, index: Index, default=None) -> Optional[T]:
@@ -57,22 +64,15 @@ class IndexDict(Generic[T]):
         if x is None and y is None and z is None:
             yield from self._data.values()
         else:
-            min, max = self._minmax.safe(self._data.keys)
-            it_u = SliceIterator(x, (min[0], max[0]))
-            it_v = SliceIterator(y, (min[1], max[1]))
-            it_w = SliceIterator(z, (min[2], max[2]))
+            k_min, k_max = self.minmax()
+            it = PositionIter(x, y, z, length=k_max - k_min + 1, offset=k_min)
             if ignore_empty:
-                for u in it_u:
-                    for v in it_v:
-                        for w in it_w:
-                            key = (u, v, w)
-                            if key in self._data:
-                                yield self._data[key]
+                for key in it:
+                    if key in self._data:
+                        yield self._data[key]
             else:
-                for u in it_u:
-                    for v in it_v:
-                        for w in it_w:
-                            yield self._data.get((u, v, w))
+                for key in it:
+                    yield self._data.get(key)
 
     def __getitem__(self, item: Union[IndexUnion, slice, Tuple[slice, ...]]) -> Union[T, List[T]]:
         if isinstance(item, slice):
@@ -99,9 +99,7 @@ class IndexDict(Generic[T]):
         self._minmax.add(index)
 
     def __setitem__(self, key: Index, value: T):
-        index = self.index(key)
-        self._data[index] = value
-        self._minmax.add(index)
+        self.set(key, value)
 
     def __contains__(self, item: Index) -> bool:
         return self.index(item) in self._data
@@ -132,6 +130,9 @@ class IndexDict(Generic[T]):
 
     def keys(self) -> KeysView[Index]:
         return self._data.keys()
+
+    def values(self) -> ValuesView[T]:
+        return self._data.values()
 
     def __iter__(self) -> Iterable[T]:
         return iter(self._data.values())
