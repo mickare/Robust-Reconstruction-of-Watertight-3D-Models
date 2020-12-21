@@ -24,20 +24,20 @@ if __name__ == '__main__':
     grid[scaled] = 1
     grid.pad_chunks(1)
 
-    dilated = dilate(grid == 1, steps=2)
-    grid[dilated] = 2
+    dilated = dilate(grid == 1, steps=3)
+    grid[dilated & (grid != 1)] = 2
 
     padded = grid == 0
 
-    # outer = next(grid.hull())
-    # fill_mask = flood_fill_at(outer.index * padded.chunk_size, grid == 0)
-    # grid[fill_mask] = 3
+    outer = next(grid.hull())
+    fill_mask = flood_fill_at(outer.index * padded.chunk_size, grid == 0)
+    grid[fill_mask] = 3
 
     ren = VoxelRender()
     fig = ren.make_figure()
     fig.add_trace(ren.grid_voxel(grid == 1, opacity=0.5, flatshading=True, name="Crust"))
     fig.add_trace(ren.grid_voxel(grid == 2, opacity=0.2, flatshading=True, name="Dilated"))
-    # fig.add_trace(ren.grid_voxel(grid == 3, opacity=0.1, flatshading=True, name="Fill"))
+    fig.add_trace(ren.grid_voxel(grid == 3, opacity=0.05, flatshading=True, name="Fill"))
     # fig.add_trace(ren.grid_voxel(padded, opacity=1.0, flatshading=True, name="Padded"))
     # array, offset = (grid == 1).to_sparse()
     # fig.add_trace(ren.dense_voxel(array.todense(), offset=offset+(0,0,20), opacity=0.5, flatshading=True))
