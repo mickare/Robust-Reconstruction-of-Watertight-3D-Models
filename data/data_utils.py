@@ -170,11 +170,11 @@ class MinMaxCheck:
 
     def add(self, index: Vec3i):
         if self._min is None:
-            self._min = index
+            self._min = np.asarray(index, dtype=int)
         else:
             self._min = np.min((self._min, index), axis=0)
         if self._max is None:
-            self._max = index
+            self._max = np.asarray(index, dtype=int)
         else:
             self._max = np.max((self._max, index), axis=0)
 
