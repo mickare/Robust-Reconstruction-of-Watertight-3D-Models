@@ -24,12 +24,12 @@ def dilate(image: ChunkGrid[bool], mask: ChunkGrid[bool] = None) -> ChunkGrid[bo
     # Dilate chunk overflow
     for index in list(result.chunks.keys()):
         for f, n in result.iter_neighbors_indicies(index):
-            r_n = result.ensure_chunk_at_index(n)
-            m = mask.ensure_chunk_at_index(index, insert=False).to_array()
-            img = image.ensure_chunk_at_index(index, insert=False).to_array()
-            s0 = f.slice()
-            s1 = f.flip().slice()
-            r_n[s1] |= m[s0] & img[s0]
-
-            r_n.cleanup_memory()
+            r_n = result.chunks.get(n, None)
+            if r_n is not None:
+                m = mask.ensure_chunk_at_index(index, insert=False).to_array()
+                img = image.ensure_chunk_at_index(index, insert=False).to_array()
+                s0 = f.slice()
+                s1 = f.flip().slice()
+                r_n[s1] |= m[s0] & img[s0]
+                r_n.cleanup_memory()
     return result
