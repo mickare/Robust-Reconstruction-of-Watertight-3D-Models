@@ -194,8 +194,9 @@ class Chunk(Generic[V]):
         self.set_array(arr)
         self.cleanup_memory()
 
-    def copy(self, empty=False):
-        c = Chunk(self._index, self._size, dtype=self._dtype, fill_value=self._fill_value)
+    def copy(self, empty=False, dtype=None):
+        dtype = dtype or self._dtype
+        c = Chunk(self._index, self._size, dtype=dtype, fill_value=dtype(self._fill_value))
         if not empty:
             if self.is_filled():
                 c.set_fill(self._value)
@@ -295,79 +296,77 @@ class Chunk(Generic[V]):
         # return self._op(other, operator.eq, bool)
         return self.eq(other)
 
-    def _operator(self, other: Union["Chunk[V]", np.ndarray, V],
-                  op: Callable[[Union[np.ndarray, V], Union[np.ndarray, V]], Union[np.ndarray, M]],
-                  dtype: Optional[Type[M]] = None, inplace=False, ) -> "Chunk[M]":
+    def _operator1(self,
+                   op: Callable[[Union[np.ndarray, V]], Union[np.ndarray, M]],
+                   dtype: Optional[Type[M]] = None, inplace=False, ) -> "Chunk[M]":
+        dtype = dtype or self.dtype
         # Inplace selection
-        if inplace:
-            c = self
-        else:
-            c = Chunk(self.index, size=self.size, dtype=dtype or self.dtype)
+        c = self if inplace else self.copy()
+        c._value = op(self._value)
+        if dtype is not None:
+            c._dtype = dtype
+            c._fill_value = dtype(self._fill_value)
+        return c
+
+    def _operator2(self, other: Union["Chunk[V]", np.ndarray, V],
+                   op: Callable[[Union[np.ndarray, V], Union[np.ndarray, V]], Union[np.ndarray, M]],
+                   dtype: Optional[Type[M]] = None, inplace=False, ) -> "Chunk[M]":
+        dtype = dtype or self.dtype
+        # Inplace selection
+        c = self if inplace else self.copy()
 
         if isinstance(other, Chunk):
-            c._is_filled = self._is_filled and other._is_filled
-            c._value = op(self._value, other._value)
+            c._is_filled = c._is_filled & other._is_filled
+            c._value = op(c._value, other._value)
         else:
-            c._is_filled = self._is_filled
-            c._value = op(self._value, other)
+            c._is_filled = c._is_filled
+            c._value = op(c._value, other)
+
+        # Update dtype and if possible the default fill value
+        # noinspection DuplicatedCode
+        if dtype is not None:
+            c._dtype = dtype
+            try:
+                if isinstance(other, Chunk):
+                    c._fill_value = dtype(op(self._fill_value, other._fill_value))
+                else:
+                    c._fill_value = dtype(op(self._fill_value, other))
+            except Exception:
+                try:
+                    c._fill_value = dtype(self._fill_value)
+                except Exception:
+                    pass
         c.cleanup_memory()
         return c
 
     # Operators
-    eq = BetterPartialMethod(_operator, op=operator.eq, dtype=bool)
-    ne = BetterPartialMethod(_operator, op=operator.ne, dtype=bool)
+    __eq__ = BetterPartialMethod(_operator2, op=operator.eq, dtype=bool)
+    __ne__ = BetterPartialMethod(_operator2, op=operator.ne, dtype=bool)
 
-    abs = BetterPartialMethod(_operator, op=operator.abs)
-    add = BetterPartialMethod(_operator, op=operator.add)
-    and_ = BetterPartialMethod(_operator, op=operator.and_)
-    floordiv = BetterPartialMethod(_operator, op=operator.floordiv)
-    inv = BetterPartialMethod(_operator, op=operator.inv)
-    mod = BetterPartialMethod(_operator, op=operator.mod)
-    mul = BetterPartialMethod(_operator, op=operator.mul)
-    matmul = BetterPartialMethod(_operator, op=operator.matmul)
-    neg = BetterPartialMethod(_operator, op=operator.neg)
-    or_ = BetterPartialMethod(_operator, op=operator.or_)
-    pos = BetterPartialMethod(_operator, op=operator.pos)
-    sub = BetterPartialMethod(_operator, op=operator.sub)
-    truediv = BetterPartialMethod(_operator, op=operator.truediv)
-    xor = BetterPartialMethod(_operator, op=operator.xor)
+    __abs__ = BetterPartialMethod(_operator1, op=operator.abs)
+    __invert__ = BetterPartialMethod(_operator1, op=operator.inv)
+    __neg__ = BetterPartialMethod(_operator1, op=operator.neg)
 
-    iand = BetterPartialMethod(_operator, op=operator.iand, dtype=bool, inplace=True)
-    ior = BetterPartialMethod(_operator, op=operator.ior, dtype=bool, inplace=True)
-    ixor = BetterPartialMethod(_operator, op=operator.ixor, dtype=bool, inplace=True)
-    iadd = BetterPartialMethod(_operator, op=operator.iadd, dtype=bool, inplace=True)
-    isub = BetterPartialMethod(_operator, op=operator.isub, dtype=bool, inplace=True)
-    imul = BetterPartialMethod(_operator, op=operator.imul, dtype=bool, inplace=True)
-    itruediv = BetterPartialMethod(_operator, op=operator.itruediv, dtype=bool, inplace=True)
-    ifloordiv = BetterPartialMethod(_operator, op=operator.ifloordiv, dtype=bool, inplace=True)
-    imod = BetterPartialMethod(_operator, op=operator.imod, dtype=bool, inplace=True)
+    __add__ = BetterPartialMethod(_operator2, op=operator.add)
+    __and__ = BetterPartialMethod(_operator2, op=operator.and_)
+    __floordiv__ = BetterPartialMethod(_operator2, op=operator.floordiv)
+    __mod__ = BetterPartialMethod(_operator2, op=operator.mod)
+    __mul__ = BetterPartialMethod(_operator2, op=operator.mul)
+    __matmul__ = BetterPartialMethod(_operator2, op=operator.matmul)
+    __or__ = BetterPartialMethod(_operator2, op=operator.or_)
+    __sub__ = BetterPartialMethod(_operator2, op=operator.sub)
+    __truediv__ = BetterPartialMethod(_operator2, op=operator.truediv, dtype=np.float)
+    __xor__ = BetterPartialMethod(_operator2, op=operator.xor)
 
-    # Set alternative opertator methods names
-    __eq__ = eq
-    __ne__ = ne
-
-    __abs__ = abs
-    __add__ = add
-    __and__ = and_
-    __floordiv__ = floordiv
-    __inv__ = inv
-    __mul__ = mul
-    __matmul__ = matmul
-    __or__ = or_
-    __pos__ = pos
-    __sub__ = sub
-    __truediv__ = truediv
-    __xor__ = xor
-
-    __iand__ = iand
-    __ior__ = ior
-    __ixor__ = ixor
-    __iadd__ = iadd
-    __isub__ = isub
-    __imul__ = imul
-    __itruediv__ = itruediv
-    __ifloordiv__ = ifloordiv
-    __imod__ = imod
+    __iand__ = BetterPartialMethod(_operator2, op=operator.iand, inplace=True)
+    __ior__ = BetterPartialMethod(_operator2, op=operator.ior, inplace=True)
+    __ixor__ = BetterPartialMethod(_operator2, op=operator.ixor, inplace=True)
+    __iadd__ = BetterPartialMethod(_operator2, op=operator.iadd, inplace=True)
+    __isub__ = BetterPartialMethod(_operator2, op=operator.isub, inplace=True)
+    __imul__ = BetterPartialMethod(_operator2, op=operator.imul, inplace=True)
+    __itruediv__ = BetterPartialMethod(_operator2, op=operator.itruediv, dtype=np.float, inplace=True)
+    __ifloordiv__ = BetterPartialMethod(_operator2, op=operator.ifloordiv, inplace=True)
+    __imod__ = BetterPartialMethod(_operator2, op=operator.imod, inplace=True)
 
 
 class ChunkGrid(Generic[V]):
@@ -414,8 +413,9 @@ class ChunkGrid(Generic[V]):
             grid_new.chunks.insert(src.index, src.convert(func, func_vec))
         return grid_new
 
-    def copy(self, empty=False):
-        new = ChunkGrid(self._chunk_size, self._dtype, self._fill_value)
+    def copy(self, empty=False, dtype=None):
+        dtype = dtype or self._dtype
+        new = ChunkGrid(self._chunk_size, dtype, dtype(self._fill_value))
         if not empty:
             for src in self.chunks.values():
                 new.chunks.insert(src.index, src.copy())
@@ -497,6 +497,10 @@ class ChunkGrid(Generic[V]):
             arr.to_coo()[start[0]:stop[0]:step[0], start[1]:stop[1]:step[1], start[2]:stop[2]:step[2]],
             chunk_min * cs
         )
+
+    def to_dense(self, *args, **kwargs) -> np.ndarray:
+        res, offset = self.to_sparse(*args, **kwargs)
+        return res.todense()
 
     def where(self, other: "ChunkGrid[bool]") -> "ChunkGrid[V]":
         result = self.copy(empty=True)
@@ -602,87 +606,91 @@ class ChunkGrid(Generic[V]):
                 new_grid.chunks.insert(i, c.invert())
             return new_grid
 
-    def _operator(self, other: Union["ChunkGrid[V]", np.ndarray, V],
-                  op: Callable[[Chunk[V], Union[Chunk[M], np.ndarray, M]], Union[Chunk[M]]],
-                  dtype: Optional[Type[M]] = None, inplace=False, ) -> "ChunkGrid[M]":
+    def _operator1(self,
+                   op: Callable[[Chunk[V]], Union[Chunk[M]]],
+                   dtype: Optional[Type[M]] = None, inplace=False, ) -> "ChunkGrid[M]":
+        dtype = dtype or self.dtype
         # Inplace selection
-        if inplace:
-            new_grid = self
-        else:
-            new_grid = self.copy(True).astype(dtype or self.dtype)
+        new_grid = self if inplace else self.copy(empty=True, dtype=dtype)
+
+        for i, a in self.chunks.items():
+            new_chunk = op(a.copy())
+            assert isinstance(new_chunk, Chunk)
+            new_grid.chunks.insert(i, new_chunk)
+
+        if dtype is not None:
+            new_grid._dtype = dtype
+            new_grid._fill_value = dtype(self._fill_value)
+        return new_grid
+
+    def _operator2(self, other: Union["ChunkGrid[V]", np.ndarray, V],
+                   op: Callable[[Chunk[V], Union[Chunk[M], np.ndarray, M]], Union[Chunk[M]]],
+                   dtype: Optional[Type[M]] = None, inplace=False, ) -> "ChunkGrid[M]":
+        dtype = dtype or self.dtype
+        # Inplace selection
+        new_grid = self if inplace else self.copy(empty=True, dtype=dtype)
 
         if isinstance(other, ChunkGrid):
             assert new_grid._chunk_size == other._chunk_size
             indices = set(self.chunks.keys())
             indices.update(other.chunks.keys())
             for i in indices:
-                a = new_grid.ensure_chunk_at_index(i, insert=False)
+                a = self.ensure_chunk_at_index(i, insert=False)
                 b = other.ensure_chunk_at_index(i, insert=False)
-                new_chunk = op(a, b)
+                new_chunk = op(a.copy(), b)
                 assert isinstance(new_chunk, Chunk)
                 new_grid.chunks.insert(i, new_chunk)
         else:
             for i, a in self.chunks.items():
-                new_chunk = op(a, other)
+                new_chunk = op(a.copy(), other)
                 assert isinstance(new_chunk, Chunk)
-                new_grid.chunks.insert(i, op(a, other))
+                new_grid.chunks.insert(i, new_chunk)
+
+        # Update dtype and if possible the default fill value
+        # noinspection DuplicatedCode
+        if dtype is not None:
+            new_grid._dtype = dtype
+            try:
+                if isinstance(other, ChunkGrid):
+                    new_grid._fill_value = dtype(op(self._fill_value, other._fill_value))
+                else:
+                    new_grid._fill_value = dtype(op(self._fill_value, other))
+            except Exception:
+                try:
+                    new_grid._fill_value = dtype(self._fill_value)
+                except Exception:
+                    pass
 
         return new_grid
 
-    eq = BetterPartialMethod(_operator, op=Chunk.eq, dtype=bool)
-    ne = BetterPartialMethod(_operator, op=Chunk.ne, dtype=bool)
+    # Operators
+    __eq__ = BetterPartialMethod(_operator2, op=operator.eq, dtype=bool)
+    __ne__ = BetterPartialMethod(_operator2, op=operator.ne, dtype=bool)
 
-    abs = BetterPartialMethod(_operator, op=Chunk.abs)
-    add = BetterPartialMethod(_operator, op=Chunk.add)
-    and_ = BetterPartialMethod(_operator, op=Chunk.and_)
-    floordiv = BetterPartialMethod(_operator, op=Chunk.floordiv)
-    inv = BetterPartialMethod(_operator, op=Chunk.inv)
-    mod = BetterPartialMethod(_operator, op=Chunk.mod)
-    mul = BetterPartialMethod(_operator, op=Chunk.mul)
-    matmul = BetterPartialMethod(_operator, op=Chunk.matmul)
-    neg = BetterPartialMethod(_operator, op=Chunk.neg)
-    or_ = BetterPartialMethod(_operator, op=Chunk.or_)
-    pos = BetterPartialMethod(_operator, op=Chunk.pos)
-    sub = BetterPartialMethod(_operator, op=Chunk.sub)
-    truediv = BetterPartialMethod(_operator, op=Chunk.truediv)
-    xor = BetterPartialMethod(_operator, op=Chunk.xor)
+    __abs__ = BetterPartialMethod(_operator1, op=operator.abs)
+    __invert__ = BetterPartialMethod(_operator1, op=operator.inv)
+    __neg__ = BetterPartialMethod(_operator1, op=operator.neg)
 
-    iand = BetterPartialMethod(_operator, op=Chunk.iand, dtype=bool, inplace=True)
-    ior = BetterPartialMethod(_operator, op=Chunk.ior, dtype=bool, inplace=True)
-    ixor = BetterPartialMethod(_operator, op=Chunk.ixor, dtype=bool, inplace=True)
-    iadd = BetterPartialMethod(_operator, op=Chunk.iadd, dtype=bool, inplace=True)
-    isub = BetterPartialMethod(_operator, op=Chunk.isub, dtype=bool, inplace=True)
-    imul = BetterPartialMethod(_operator, op=Chunk.imul, dtype=bool, inplace=True)
-    itruediv = BetterPartialMethod(_operator, op=Chunk.itruediv, dtype=bool, inplace=True)
-    ifloordiv = BetterPartialMethod(_operator, op=Chunk.ifloordiv, dtype=bool, inplace=True)
-    imod = BetterPartialMethod(_operator, op=Chunk.imod, dtype=bool, inplace=True)
+    __add__ = BetterPartialMethod(_operator2, op=operator.add)
+    __and__ = BetterPartialMethod(_operator2, op=operator.and_)
+    __floordiv__ = BetterPartialMethod(_operator2, op=operator.floordiv)
+    __mod__ = BetterPartialMethod(_operator2, op=operator.mod)
+    __mul__ = BetterPartialMethod(_operator2, op=operator.mul)
+    __matmul__ = BetterPartialMethod(_operator2, op=operator.matmul)
+    __or__ = BetterPartialMethod(_operator2, op=operator.or_)
+    __sub__ = BetterPartialMethod(_operator2, op=operator.sub)
+    __truediv__ = BetterPartialMethod(_operator2, op=operator.truediv, dtype=np.float)
+    __xor__ = BetterPartialMethod(_operator2, op=operator.xor)
 
-    # Set alternative opertator methods names
-    __eq__ = eq  # type: ChunkGrid
-    __ne__ = ne  # type: ChunkGrid
-
-    __abs__ = abs
-    __add__ = add
-    __and__ = and_
-    __floordiv__ = floordiv
-    __inv__ = inv
-    __mul__ = mul
-    __matmul__ = matmul
-    __or__ = or_
-    __pos__ = pos
-    __sub__ = sub
-    __truediv__ = truediv
-    __xor__ = xor
-
-    __iand__ = iand
-    __ior__ = ior
-    __ixor__ = ixor
-    __iadd__ = iadd
-    __isub__ = isub
-    __imul__ = imul
-    __itruediv__ = itruediv
-    __ifloordiv__ = ifloordiv
-    __imod__ = imod
+    __iand__ = BetterPartialMethod(_operator2, op=operator.iand, inplace=True)
+    __ior__ = BetterPartialMethod(_operator2, op=operator.ior, inplace=True)
+    __ixor__ = BetterPartialMethod(_operator2, op=operator.ixor, inplace=True)
+    __iadd__ = BetterPartialMethod(_operator2, op=operator.iadd, inplace=True)
+    __isub__ = BetterPartialMethod(_operator2, op=operator.isub, inplace=True)
+    __imul__ = BetterPartialMethod(_operator2, op=operator.imul, inplace=True)
+    __itruediv__ = BetterPartialMethod(_operator2, op=operator.itruediv, dtype=np.float, inplace=True)
+    __ifloordiv__ = BetterPartialMethod(_operator2, op=operator.ifloordiv, inplace=True)
+    __imod__ = BetterPartialMethod(_operator2, op=operator.imod, inplace=True)
 
     def pad_chunks(self, width: int = 1):
         visited: Set[ChunkIndex] = set()
