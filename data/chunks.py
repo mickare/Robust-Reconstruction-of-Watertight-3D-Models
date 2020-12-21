@@ -2,7 +2,7 @@ import enum
 import functools
 import itertools
 import operator
-from typing import Union, Tuple, Iterator, Optional, Generic, TypeVar, Callable, Type, Sequence
+from typing import Union, Tuple, Iterator, Optional, Generic, TypeVar, Callable, Type, Sequence, Set
 
 import numpy as np
 import sparse
@@ -157,7 +157,7 @@ class Chunk(Generic[V]):
         return self
 
     def set_array(self, value: np.ndarray):
-        assert value.shape == self.shape
+        assert self.shape == value.shape, f"{self.shape} != {value.shape}"
         self._value = np.asarray(value, dtype=self._dtype)
         self._is_filled = False
         return self
@@ -277,7 +277,7 @@ class Chunk(Generic[V]):
         arr = np.pad(self.to_array(), padding)
         for face, index in grid.iter_neighbors_indicies(self._index):
             c = grid.ensure_chunk_at_index(index, insert=False)
-            arr[face.slice(padding)] = c.to_array()[face.flip().slice(padding)]
+            arr[face.slice(padding)] = np.pad(c.to_array(), padding)[face.flip().slice(padding)]
         if corners:
             for u, v, w in ChunkFace.corners():
                 s0 = ChunkFace.corner_slice(u, v, w, width=padding)
@@ -448,7 +448,8 @@ class ChunkGrid(Generic[V]):
     def empty_mask(self, default=False) -> np.ndarray:
         return np.full(self.chunk_shape, default, dtype=np.bool)
 
-    def iter_neighbors_indicies(self, index: ChunkIndex) -> Iterator[Tuple[ChunkFace, Vec3i]]:
+    @classmethod
+    def iter_neighbors_indicies(cls, index: ChunkIndex) -> Iterator[Tuple[ChunkFace, Vec3i]]:
         yield from ((f, np.add(index, f.direction)) for f in ChunkFace)
 
     def iter_neighbors(self, index: ChunkIndex, flatten=False) -> Iterator[Tuple[ChunkFace, Optional["Chunk"]]]:
@@ -615,7 +616,7 @@ class ChunkGrid(Generic[V]):
             indices = set(self.chunks.keys())
             indices.update(other.chunks.keys())
             for i in indices:
-                a = new_grid.ensure_chunk_at_index(i)
+                a = new_grid.ensure_chunk_at_index(i, insert=False)
                 b = other.ensure_chunk_at_index(i, insert=False)
                 new_chunk = op(a, b)
                 assert isinstance(new_chunk, Chunk)
