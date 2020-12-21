@@ -1,4 +1,5 @@
 import enum
+import operator
 from typing import Union, Tuple, Iterator, Optional, Generic, TypeVar, Callable, Type, Sequence
 
 import numpy as np
@@ -11,12 +12,6 @@ from mathlib import Vec3i
 V = TypeVar('V')
 M = TypeVar('M')
 ChunkIndex = Index
-
-
-class ChunkType(enum.Enum):
-    EMPTY = 0
-    FILL = 1
-    ARRAY = 2
 
 
 class ChunkFace(enum.IntEnum):
@@ -66,21 +61,17 @@ class ChunkHelper:
 
 
 class Chunk(Generic[V]):
-    def __init__(self, index: Vec3i, size: int, dtype=None, empty_value: Optional[V] = None):
+    def __init__(self, index: Vec3i, size: int, dtype: Optional[Type[V]] = None, empty_value: Optional[V] = None):
         self._index: Vec3i = np.asarray(index, dtype=np.int)
         self._size = size
-        self._dtype = dtype
-        self._empty_value = empty_value
-        self._type = ChunkType.EMPTY
-        self._value: Union[None, V, np.ndarray] = None
+        self._dtype = np.dtype(dtype).type
+        self._empty_value = self._dtype() if empty_value is None else self._dtype(empty_value)
+        self._is_filled = True
+        self._value: Union[V, np.ndarray] = self._empty_value
 
     @property
     def index(self) -> Vec3i:
         return self._index
-
-    @property
-    def type(self) -> ChunkType:
-        return self._type
 
     @property
     def value(self) -> Union[None, V, np.ndarray]:
@@ -98,8 +89,11 @@ class Chunk(Generic[V]):
     def shape(self) -> Tuple[int, int, int]:
         return self._size, self._size, self._size
 
-    def empty(self) -> bool:
-        return self._type is ChunkType.EMPTY
+    def is_filled(self) -> bool:
+        return self._is_filled
+
+    def is_array(self) -> bool:
+        return not self._is_filled
 
     def inner(self, pos: Vec3i) -> np.ndarray:
         return np.asarray(pos, dtype=np.int) % self._size
@@ -112,60 +106,27 @@ class Chunk(Generic[V]):
 
     def set_fill(self, value: V):
         self._value = value
-        self._type = ChunkType.FILL
-
-    def clear(self):
-        self._value = None
-        self._type = ChunkType.EMPTY
+        self._is_filled = True
+        return self
 
     def set_array(self, value: np.ndarray):
         assert value.shape == self.shape
         self._value = np.asarray(value, dtype=self._dtype)
-        self._type = ChunkType.ARRAY
-
-    def is_filled(self, *, value: Optional[V] = None, logic: Optional[bool] = None):
-        if self._value is None:
-            return value is None and logic is None
-        else:
-            if logic is not None:
-                return bool(self._value) == logic
-            elif value is not None:
-                return self._value == value
-            else:
-                return self._value == self._empty_value
-
-    def mask(self, *, value: Optional[V] = None, logic: Optional[bool] = None) -> np.ndarray:
-        assert not (value is not None and logic is not None)  # Args value and logic cannot be used at the same time
-        if self._type == ChunkType.EMPTY:
-            return np.full(self.shape, False, dtype=np.bool)
-        elif self._type == ChunkType.FILL:
-            return np.full(self.shape, self.is_filled(value=value, logic=logic), dtype=np.bool)
-        elif self._type == ChunkType.ARRAY:
-            if logic is not None:
-                return self._value.astype(np.bool) == logic
-            elif value is not None:
-                return self._value == value
-            else:
-                return self._value == self._empty_value
-        else:
-            raise RuntimeError(f"Unexpected chunk type {self._type}")
+        self._is_filled = False
+        return self
 
     def to_array(self):
-        if self._type == ChunkType.EMPTY:
-            return np.full(self.shape, self._empty_value, dtype=self._dtype)
-        elif self._type == ChunkType.FILL:
+        if self._is_filled:
             return np.full(self.shape, self._value, dtype=self._dtype)
-        elif self._type == ChunkType.ARRAY:
-            return self._value
         else:
-            raise RuntimeError(f"Unexpected chunk type {self._type}")
+            return self._value
 
     def where(self, other: "Chunk") -> "Chunk[V]":
         other: Chunk[bool] = other.astype(bool)
         c = self.copy(empty=True)
-        if other.type == ChunkType.FILL and other._value:
+        if other.is_filled() and other._value:
             c.set_fill(self._value)
-        elif other.type == ChunkType.ARRAY:
+        else:
             arr = np.full(self.shape, self._empty_value, dtype=self._dtype)
             arr[other._value] = self._value[other._value]
             c.set_array(arr)
@@ -176,7 +137,11 @@ class Chunk(Generic[V]):
             return self.where(item)
         return self.to_array()[item]
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: Union[np.ndarray, "Chunk"], value: Union[V, np.ndarray, "Chunk"]):
+        if isinstance(key, Chunk):
+            key = key.astype(bool).to_array()
+        if isinstance(value, Chunk):
+            value = value.to_array()
         arr = self.to_array()
         arr[key] = value
         self.set_array(arr)
@@ -185,9 +150,9 @@ class Chunk(Generic[V]):
     def copy(self, empty=False):
         c = Chunk(self._index, self._size, dtype=self._dtype, empty_value=self._empty_value)
         if not empty:
-            if self._type == ChunkType.FILL:
+            if self.is_filled():
                 c.set_fill(self._value)
-            elif self._type == ChunkType.ARRAY:
+            else:
                 c.set_array(self._value.copy())
         return c
 
@@ -207,9 +172,9 @@ class Chunk(Generic[V]):
         for offset in ChunkHelper.indexGrid[:splits]:
             new_index = np.add(self._index * splits, offset)
             c = Chunk(new_index, size=chunk_size, empty_value=self._empty_value)
-            if self._type == ChunkType.FILL:
+            if self.is_filled():
                 c.set_fill(self._value)
-            elif self._type == ChunkType.ARRAY:
+            else:
                 u, v, w = np.asarray(offset, dtype=np.int) * split_size
                 tmp = self._value[u: u + split_size, v: v + split_size, w: w + split_size]
                 if repeats == 1:
@@ -222,9 +187,9 @@ class Chunk(Generic[V]):
     def convert(self, func: Callable[[V], M], func_vec: Optional[Callable[[np.ndarray], np.ndarray]]) -> "Chunk[M]":
         func_vec = func_vec or np.vectorize(func)
         c = Chunk(self._index, self._size, empty_value=func(self._empty_value))
-        if self.type == ChunkType.FILL:
+        if self.is_filled():
             c.set_fill(func(self._value))
-        elif self.type == ChunkType.ARRAY:
+        else:
             c.set_array(func_vec(self._value))
         return c
 
@@ -232,41 +197,18 @@ class Chunk(Generic[V]):
         if self._dtype == dtype:
             return self
         c = Chunk(self._index, self._size, dtype=dtype, empty_value=dtype(self._empty_value))
-        if self.type == ChunkType.FILL:
+        if self.is_filled():
             c.set_fill(dtype(self._value))
-        elif self.type == ChunkType.ARRAY:
+        else:
             c.set_array(self._value.astype(dtype))
         return c
 
     def __bool__(self):
         raise RuntimeWarning(f"Do not use __bool__ on {self.__class__}")
 
-    def equals(self, other: Union["Chunk", V]) -> "Chunk[bool]":
-        c = Chunk(self._index, size=self._size, dtype=bool, empty_value=False)
-        c.set_fill(False)
-        if isinstance(other, Chunk):
-            st = self._type
-            ot = other._type
-            if st == ChunkType.EMPTY or ot == ChunkType.EMPTY:
-                c.set_fill(st == ot)
-            elif st == ChunkType.FILL and ot == ChunkType.FILL:
-                c.set_fill(self._value == other._value)
-            else:
-                if st == ChunkType.ARRAY:
-                    c.set_array(self._value == other._value)
-                else:
-                    c.set_array(other._value == self._value)
-        else:
-            if self._type == ChunkType.FILL:
-                c.set_fill(self._value == other)
-            elif self._type == ChunkType.ARRAY:
-                c.set_array(self._value == other)
-        c.cleanup_memory()
-        return c
-
     def cleanup_memory(self):
         """Try to reduce memory footprint"""
-        if self._type == ChunkType.ARRAY:
+        if self.is_array():
             if self._dtype == bool:
                 if np.all(self._value):
                     self.set_fill(True)
@@ -276,37 +218,90 @@ class Chunk(Generic[V]):
                 u = np.unique(self._value)
                 if len(u) == 1:
                     self.set_fill(u.item())
-
-    def __eq__(self, other) -> "Chunk[bool]":
-        return self.equals(other)
+        return self
 
     def all(self) -> bool:
-        if self._type == ChunkType.FILL:
-            return bool(self._value)
-        elif self._type == ChunkType.ARRAY:
-            return np.all(self._value)
-        return False
+        return np.all(self._value)
 
     def any(self) -> bool:
-        if self._type == ChunkType.FILL:
-            return bool(self._value)
-        elif self._type == ChunkType.ARRAY:
-            return np.any(self._value)
-        return False
+        return np.any(self._value)
 
     def invert(self, inplace=False) -> "Chunk[V]":
         c = self if inplace else self.copy(empty=True)
-        if self._type != ChunkType.EMPTY:
-            self._value = np.invert(self._value)
+        c._value = np.invert(self._value)
         return c
+
+    def _op(self, other: Union["Chunk[V]", V],
+            op: Callable[[Union[np.ndarray, V], Union[np.ndarray, V]], Union[np.ndarray, M]],
+            dtype: Optional[Type[M]] = None, inplace=False) -> "Chunk[M]":
+        if inplace:
+            c = self
+        else:
+            c = Chunk(self._index, size=self._size, dtype=dtype or self._dtype)
+        if isinstance(other, Chunk):
+            c._is_filled = self._is_filled and other._is_filled
+            c._value = op(self._value, other._value)
+        else:
+            c._is_filled = self._is_filled
+            c._value = op(self._value, other)
+        c.cleanup_memory()
+        return c
+
+    def equals(self, other: Union["Chunk", V]) -> "Chunk[bool]":
+        return self._op(other, operator.eq, bool)
+
+    # def equals(self, other: Union["Chunk", V]) -> "Chunk[bool]":
+    #     c = Chunk(self._index, size=self._size, dtype=bool, empty_value=False)
+    #     if isinstance(other, Chunk):
+    #         if self.is_filled() and other.is_filled():
+    #             c.set_fill(self._value == other._value)
+    #         else:
+    #             c.set_array(self._value == other._value)
+    #     else:
+    #         if self.is_filled():
+    #             c.set_fill(self._value == other)
+    #         else:
+    #             c.set_array(self._value == other)
+    #     c.cleanup_memory()
+    #     return c
+
+    def eq(self, other) -> "Chunk[bool]":
+        return self.equals(other)
+
+    def iand(self, other) -> "Chunk[V]":
+        return self._op(other, operator.iand, dtype=self._dtype, inplace=True)
+
+    def ior(self, other) -> "Chunk[V]":
+        return self._op(other, operator.ior, dtype=self._dtype, inplace=True)
+
+    def ixor(self, other) -> "Chunk[V]":
+        return self._op(other, operator.ixor, dtype=self._dtype, inplace=True)
+
+    def iadd(self, other) -> "Chunk[V]":
+        return self._op(other, operator.iadd, dtype=self._dtype, inplace=True)
+
+    def isub(self, other) -> "Chunk[V]":
+        return self._op(other, operator.isub, dtype=self._dtype, inplace=True)
+
+    def imul(self, other) -> "Chunk[V]":
+        return self._op(other, operator.imul, dtype=self._dtype, inplace=True)
+
+    def itruediv(self, other) -> "Chunk[V]":
+        return self._op(other, operator.itruediv, dtype=self._dtype, inplace=True)
+
+    def ifloordiv(self, other) -> "Chunk[V]":
+        return self._op(other, operator.ifloordiv, dtype=self._dtype, inplace=True)
+
+    def imod(self, other) -> "Chunk[V]":
+        return self._op(other, operator.imod, dtype=self._dtype, inplace=True)
 
 
 class ChunkGrid(Generic[V]):
     def __init__(self, chunk_size: int = 8, dtype=None, empty_value: Optional[V] = None):
         assert chunk_size > 0
         self._chunk_size = chunk_size
-        self._dtype = dtype
-        self._empty_value = empty_value
+        self._dtype = np.dtype(dtype).type
+        self._empty_value = self._dtype() if empty_value is None else self._dtype(empty_value)
         self.chunks: IndexDict[Chunk[V]] = IndexDict()
 
     @property
@@ -330,7 +325,9 @@ class ChunkGrid(Generic[V]):
         index_min, index_max = self.chunks.minmax()
         return (index_max - index_min + 1) * self._chunk_size
 
-    def astype(self, dtype: M) -> "ChunkGrid[M]":
+    def astype(self, dtype: Type[M]) -> "ChunkGrid[M]":
+        if self._dtype == dtype:
+            return self
         grid_new: ChunkGrid[M] = ChunkGrid(self._chunk_size, dtype, empty_value=dtype(self._empty_value))
         for src in self.chunks.values():
             grid_new.chunks.set(src.index, src.astype(dtype))
@@ -495,6 +492,7 @@ class ChunkGrid(Generic[V]):
                 self.set_pos(pos, value)
 
     def _set_positions(self, pos: np.ndarray, value: Union[V, Sequence]):
+        pos = np.asarray(pos, dtype=int)
         if pos.shape == (3,):
             self.set_pos(pos, value)
         assert pos.ndim == 2 and pos.shape[1] == 3
@@ -506,13 +504,19 @@ class ChunkGrid(Generic[V]):
             for p in pos:
                 self.set_pos(p, value)
 
+    def _set_chunks(self, other: "ChunkGrid", value: Union[V, np.ndarray, Chunk[V]]):
+        assert self._chunk_size == other._chunk_size
+        for o in other.chunks:
+            self.ensure_chunk_at_index(o.index)[o] = value
+
     def __setitem__(self, key, value):
         if isinstance(key, slice):
             self._set_slices(value, key)
         elif isinstance(key, tuple) and len(key) <= 3:
             self._set_slices(value, *key)
         elif isinstance(key, (np.ndarray, list)):
-            pos = np.asarray(key, dtype=int)
-            self._set_positions(pos, value)
+            self._set_positions(key, value)
+        elif isinstance(key, ChunkGrid):
+            self._set_chunks(key, value)
         else:
             raise IndexError("Invalid get")
