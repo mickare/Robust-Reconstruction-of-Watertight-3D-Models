@@ -59,56 +59,6 @@ class FloodFillTask:
         return functools.reduce(_merge, tasks)
 
 
-#
-# class FillMask:
-#     __slots__ = ["index", "full", "mask"]
-#
-#     def __init__(self, index: Index, full: bool = False, mask: Optional[np.ndarray] = None):
-#         assert len(index) == 3
-#         self.index = tuple(index)
-#         self.full = full
-#         self.mask = mask
-#         self._cleanup()
-#
-#     def _cleanup(self):
-#         if self.full is False and np.all(self.mask):
-#             self.full = True
-#             self.mask = None
-#
-#     def merge(self, other: "FillMask") -> bool:
-#         """
-#         Merge another fill mask into this one.
-#         :param other: FillMask merging into this one
-#         :return: True if this mask changed, else False
-#         """
-#         assert self.index == other.index
-#         if other.full:
-#             changed = self.full != other.full
-#             self.full = other.full
-#             self.mask = None
-#             return changed
-#         if self.full:
-#             return False
-#         if other.mask is not None:
-#             if self.mask is None:
-#                 self.mask = other.mask
-#                 return True
-#             else:
-#                 changed = np.any(self.mask != other.mask)
-#                 self.mask |= other.mask
-#                 self._cleanup()
-#                 return changed
-#         return False
-#
-#     def apply(self, chunk: Chunk, value):
-#         if self.full:
-#             chunk.set_fill(value)
-#         elif self.mask is not None:
-#             tmp = chunk.to_array()
-#             tmp[self.mask] = value
-#             chunk.set_array(tmp)
-
-
 class FloodFillOperator:
 
     def __init__(self, mask: ChunkGrid[bool]):
