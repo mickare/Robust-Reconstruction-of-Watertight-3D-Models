@@ -1,11 +1,11 @@
-from typing import Tuple, Sequence, Iterable, Optional, List, Dict
+from typing import Tuple, Sequence, Iterable, Optional, List
 
 import numpy as np
 import plotly.graph_objects as go
 import tqdm
 
 from data.chunks import Chunk, ChunkGrid, ChunkType, ChunkFace
-from model.model_mesh import MeshModelLoader
+from mathlib import Vec3f
 from operators.fill_operator import FillOperator
 
 
@@ -28,92 +28,109 @@ class MeshHelper:
             index += len(v)
 
     @classmethod
-    def chunk_to_voxel_mesh(cls, chunk: Chunk, parent: Optional[ChunkGrid] = None,
-                            **mask_kwargs) -> Tuple[np.ndarray, np.ndarray]:
-        print(mask_kwargs)
-        if chunk.empty():
+    def _create_mesh_from_deltas(cls, dx: np.ndarray, dy: np.ndarray, dz: np.ndarray):
+        ix = np.nonzero(dx)
+        iy = np.nonzero(dy)
+        iz = np.nonzero(dz)
+
+        faces_front = np.array([(0, 1, 2), (3, 2, 1)], dtype=np.int)
+        faces_back = np.array([(3, 2, 1), (0, 1, 2)], dtype=np.int)
+
+        vx = [np.array([(0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1)]) + f for f, d in zip(np.transpose(ix), dx[ix])]
+        fx = [(faces_front if d >= 0 else faces_back) + (n * 4) for n, d in enumerate(dx[ix])]
+
+        vy = [np.array([(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)]) + f for f, d in zip(np.transpose(iy), dy[iy])]
+        fy = [(faces_front if d >= 0 else faces_back) + (n * 4) for n, d in enumerate(dy[iy])]
+
+        vz = [np.array([(0, 0, 0), (0, 1, 0), (1, 0, 0), (1, 1, 0)]) + f for f, d in zip(np.transpose(iz), dz[iz])]
+        fz = [(faces_front if d >= 0 else faces_back) + (n * 4) for n, d in enumerate(dz[iz])]
+
+        vertices, faces = cls.reduce_mesh([np.vstack(v) for v in (vx, vy, vz) if v],
+                                          [np.vstack(f) for f in (fx, fy, fz) if f])
+        return vertices, faces
+
+    @classmethod
+    def extract_voxel_mesh(cls, mask: np.ndarray, neighbors: Sequence[Optional[Chunk]] = None):
+        if neighbors is None:
+            neighbors = [None] * 6
+        mask = mask.astype(dtype=np.bool)
+
+        cx = np.array(np.pad(mask, ((1, 1), (0, 0), (0, 0)), constant_values=False), dtype=np.int8)
+        cy = np.array(np.pad(mask, ((0, 0), (1, 1), (0, 0)), constant_values=False), dtype=np.int8)
+        cz = np.array(np.pad(mask, ((0, 0), (0, 0), (1, 1)), constant_values=False), dtype=np.int8)
+
+        def transfer_face(face: ChunkFace, dst: np.ndarray):
+            n: Optional[Chunk] = neighbors[face]
+            if n is not None:
+                dst[face.slice()] = n.to_array()[face.flip().slice()].astype(dtype=np.bool)
+
+        # X-Neighbors
+        transfer_face(ChunkFace.NORTH, cx)
+        transfer_face(ChunkFace.SOUTH, cx)
+
+        # Y-Neighbors
+        transfer_face(ChunkFace.TOP, cy)
+        transfer_face(ChunkFace.BOTTOM, cy)
+
+        # Z-Neighbors
+        transfer_face(ChunkFace.EAST, cz)
+        transfer_face(ChunkFace.WEST, cz)
+
+        # Directions of faces -1 and +1, no face is zero
+        dx = cx[1:, :, :] - cx[:-1, :, :]
+        dy = cy[:, 1:, :] - cy[:, :-1, :]
+        dz = cz[:, :, 1:] - cz[:, :, :-1]
+
+        # Remove duplicate faces at border, show only faces that point away
+        def clip_face(face0: ChunkFace, dst: np.ndarray):
+            s0 = face0.slice()
+            s1 = face0.flip().slice()
+            dst[s0] = np.where(dst[s0] > 0, 0, dst[s0])
+            dst[s1] = np.where(dst[s1] < 0, 0, dst[s1])
+
+        clip_face(ChunkFace.NORTH, dx)
+        clip_face(ChunkFace.TOP, dy)
+        clip_face(ChunkFace.EAST, dz)
+
+        return cls._create_mesh_from_deltas(dx, dy, dz)
+
+    @classmethod
+    def chunk_to_voxel_mesh(cls, chunk: Chunk, parent: Optional[ChunkGrid] = None) -> Tuple[np.ndarray, np.ndarray]:
+
+        if not chunk.any():
             return np.empty((0, 3), dtype=np.float), np.empty((0, 3), dtype=np.int)
         elif chunk.type == ChunkType.FILL:
-            if chunk.is_filled(**mask_kwargs):
-                vertices = np.array([
-                    (0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1),
-                    (1, 0, 0), (1, 0, 1), (1, 1, 0), (1, 1, 1)
-                ], dtype=np.float) * chunk.size
-                faces = np.array([
-                    (0, 1, 2), (3, 2, 1),  # Face
-                    (2, 3, 6), (7, 6, 3),  #
-                    (3, 1, 7), (5, 7, 1),  #
-                    (7, 5, 6), (4, 6, 5),  #
-                    (5, 1, 4), (0, 4, 1),  #
-                    (4, 0, 6), (2, 6, 0)
-                ], dtype=np.int)
-                return vertices + chunk.index * chunk.size, faces
+            vertices = np.array([
+                (0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1),
+                (1, 0, 0), (1, 0, 1), (1, 1, 0), (1, 1, 1)
+            ], dtype=np.float) * chunk.size
+            faces = np.array([
+                (0, 1, 2), (3, 2, 1),  # Face
+                (2, 3, 6), (7, 6, 3),  #
+                (3, 1, 7), (5, 7, 1),  #
+                (7, 5, 6), (4, 6, 5),  #
+                (5, 1, 4), (0, 4, 1),  #
+                (4, 0, 6), (2, 6, 0)
+            ], dtype=np.int)
+            return vertices + chunk.index * chunk.size, faces
         elif chunk.type == ChunkType.ARRAY:
             neighbors: List[Optional[Chunk]] = [None] * 6
-            if parent:
+            if parent is not None:
                 neighbors = [c for f, c in parent.iter_neighbors(chunk.index, flatten=False)]
                 assert len(neighbors) == 6
 
-            crust = chunk.mask(**mask_kwargs)
-            if not crust.any():
-                return np.empty((0, 3), dtype=np.float), np.empty((0, 3), dtype=np.int)
-
-            cx = np.array(np.pad(crust, ((1, 1), (0, 0), (0, 0)), constant_values=False), dtype=np.bool)
-            cy = np.array(np.pad(crust, ((0, 0), (1, 1), (0, 0)), constant_values=False), dtype=np.bool)
-            cz = np.array(np.pad(crust, ((0, 0), (0, 0), (1, 1)), constant_values=False), dtype=np.bool)
-
-            def transfer_face(face: ChunkFace, dst: np.ndarray):
-                n: Optional[Chunk] = neighbors[face]
-                if n is not None:
-                    dst[face.slice()] = n.mask(**mask_kwargs)[face.flip().slice()]
-
-            # X-Neighbors
-            transfer_face(ChunkFace.NORTH, cx)
-            transfer_face(ChunkFace.SOUTH, cx)
-
-            # Y-Neighbors
-            transfer_face(ChunkFace.EAST, cy)
-            transfer_face(ChunkFace.WEST, cy)
-
-            # Z-Neighbors
-            transfer_face(ChunkFace.TOP, cz)
-            transfer_face(ChunkFace.BOTTOM, cz)
-
-            dx = cx[1:, :, :] ^ cx[:-1, :, :]
-            dy = cy[:, 1:, :] ^ cy[:, :-1, :]
-            dz = cz[:, :, 1:] ^ cz[:, :, :-1]
-
-            ix = np.nonzero(dx)
-            iy = np.nonzero(dy)
-            iz = np.nonzero(dz)
-
-            faces_front = np.array([(0, 1, 2), (3, 2, 1)], dtype=np.int)
-            faces_back = np.array([(3, 2, 1), (0, 1, 2)], dtype=np.int)
-
-            vx = [np.array([(0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1)]) + f for f, d in zip(np.transpose(ix), dx[ix])]
-            fx = [(faces_front if d >= 0 else faces_back) + (n * 4) for n, d in enumerate(dx[ix])]
-
-            vy = [np.array([(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)]) + f for f, d in zip(np.transpose(iy), dy[iy])]
-            fy = [(faces_front if d >= 0 else faces_back) + (n * 4) for n, d in enumerate(dy[iy])]
-
-            vz = [np.array([(0, 0, 0), (0, 1, 0), (1, 0, 0), (1, 1, 0)]) + f for f, d in zip(np.transpose(iz), dz[iz])]
-            fz = [(faces_front if d >= 0 else faces_back) + (n * 4) for n, d in enumerate(dz[iz])]
-
-            vertices, faces = cls.reduce_mesh([np.vstack(v) for v in (vx, vy, vz) if v],
-                                              [np.vstack(f) for f in (fx, fy, fz) if f])
+            vertices, faces = cls.extract_voxel_mesh(chunk.to_array(), neighbors=neighbors)
             return vertices + chunk.index * chunk.size, faces
-            # end elif chunk.type == ChunkType.ARRAY:
-
         # else empty
         return np.empty((0, 3), dtype=np.float), np.empty((0, 3), dtype=np.int)
 
     @classmethod
-    def grid_to_voxel_mesh(cls, grid: ChunkGrid, verbose=True, **mask_kwargs):
+    def grid_to_voxel_mesh(cls, grid: ChunkGrid, verbose=True):
         if verbose:
             chunks = tqdm.tqdm(grid.chunks, desc="Building voxel mesh")
         else:
             chunks = grid.chunks
-        vertices, faces = zip(*(cls.chunk_to_voxel_mesh(c, **mask_kwargs) for c in chunks))
+        vertices, faces = zip(*(cls.chunk_to_voxel_mesh(c, parent=grid) for c in chunks))
         return cls.reduce_mesh(vertices, faces)
 
 
@@ -128,20 +145,29 @@ class VoxelRender:
             return x, z, y
         return x, y, z
 
-    def make_mesh(self, grid: ChunkGrid, verbose=True, voxel_kwargs: Optional[Dict] = None, **kwargs):
+    def dense_voxel(self, dense: np.ndarray, **kwargs):
+        vertices, faces = MeshHelper.extract_voxel_mesh(dense)
+        return self.make_mesh(vertices, faces, **kwargs)
+
+    def grid_voxel(self, grid: ChunkGrid, verbose=True, **kwargs):
+        vertices, faces = MeshHelper.grid_to_voxel_mesh(grid, verbose=verbose)
+        return self.make_mesh(vertices, faces, **kwargs)
+
+    def make_mesh(self, vertices: np.ndarray, faces: np.ndarray,
+                  scale=1.0, offset: Optional[Vec3f] = None, **kwargs):
         kwargs.setdefault("flatshading", True)
         kwargs.setdefault("lighting", dict(
             ambient=0.4,
-            # diffuse=0.5,
-            # facenormalsepsilon=0.0000000000001,
-            # fresnel=0.001,
-            # roughness=0.9,
-            # specular=0.1,
+            diffuse=0.5,
+            facenormalsepsilon=0.0000000000001,
+            fresnel=0.001,
+            roughness=0.9,
+            specular=0.1,
         ))
 
-        voxel_kwargs = voxel_kwargs or {}
-        voxel_kwargs.setdefault("verbose", True)
-        vertices, faces = MeshHelper.grid_to_voxel_mesh(grid, **voxel_kwargs)
+        offset = (0, 0, 0) if offset is None else offset
+
+        vertices = scale * vertices + offset
         x, y, z = self._unwrap(vertices)
         i, j, k = faces.T
         return go.Mesh3d(x=x, y=y, z=z, i=i, j=j, k=k, **kwargs)
@@ -175,6 +201,7 @@ class VoxelRender:
 
 def plot_boolean_chunkgrid():
     from render_cloud import CloudRender
+    from model.model_mesh import MeshModelLoader
 
     # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
     # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
@@ -204,24 +231,28 @@ def plot_boolean_chunkgrid():
 
 if __name__ == '__main__':
     from render_cloud import CloudRender
+    from model.model_mesh import MeshModelLoader
+    from model.model_pts import PtsModelLoader
 
-    # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
+    data = PtsModelLoader().load("models/bunny/bunnyData.pts")
     # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
-    data = MeshModelLoader(samples=30000, noise=0.1).load("models/cat/cat_reference.obj")
+    # data = MeshModelLoader(samples=30000, noise=0.1).load("models/cat/cat_reference.obj")
 
     data_min, data_max = np.min(data, axis=0), np.max(data, axis=0)
     data_delta_max = np.max(data_max - data_min)
 
     resolution = 32
 
-    grid = ChunkGrid(8, empty_value=0)
+    grid = ChunkGrid(8, dtype=int, empty_value=0)
     scaled = (data - data_min) * resolution / data_delta_max
     assert scaled.shape[1] == 3
 
-    for p in scaled:
-        pos = np.array(p, dtype=int)
-        c = grid.ensure_chunk_at_pos(pos)
-        c.set_pos(pos, 1)
+    grid[scaled] = 1
+
+    # for p in scaled:
+    #     pos = np.array(p, dtype=int)
+    #     c = grid.ensure_chunk_at_pos(pos)
+    #     c.set_pos(pos, 1)
 
     # Add padding
     filled = set(tuple(c.index) for c in grid.chunks)
@@ -229,18 +260,19 @@ if __name__ == '__main__':
     for e in extra:
         grid.ensure_chunk_at_index(e)
 
-    fill = FillOperator(grid)
+    fill = FillOperator(grid==0)
     # c = grid.ensure_chunk_at_pos((7, 9, 7))
     # c.set_fill(2)
-    masks = fill.fill_masks_parallel((7, 9, 7))
+    masks = fill.fill_masks((7, 9, 7))
 
     for m in masks.values():
         m.apply(grid.ensure_chunk_at_index(m.index), 3)
 
     ren = VoxelRender()
     fig = ren.make_figure()
-    # fig.add_trace(ren.make_mesh(grid, opacity=0.4, flatshading=True, voxel_kwargs=dict(value=1)))
-    fig.add_trace(ren.make_mesh(grid, opacity=0.4, flatshading=True, voxel_kwargs=dict(value=2)))
-    fig.add_trace(ren.make_mesh(grid, opacity=0.1, flatshading=True, voxel_kwargs=dict(value=3)))
+    fig.add_trace(ren.grid_voxel(grid == 1, opacity=1.0, flatshading=True))
+    # fig.add_trace(ren.grid_voxel(grid == 3, opacity=0.1, flatshading=True))
+    # array, offset = (grid == 1).to_sparse()
+    # fig.add_trace(ren.dense_voxel(array.todense(), offset=offset+(0,0,20), opacity=0.5, flatshading=True))
     fig.add_trace(CloudRender().make_scatter(scaled, marker=dict(size=0.5)))
     fig.show()
