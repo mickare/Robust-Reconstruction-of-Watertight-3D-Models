@@ -1,5 +1,6 @@
 import enum
 import functools
+import itertools
 import operator
 from typing import Union, Tuple, Iterator, Optional, Generic, TypeVar, Callable, Type, Sequence
 
@@ -30,14 +31,18 @@ class ChunkFace(enum.IntEnum):
     def flip(self) -> "ChunkFace":
         return ChunkFace((self // 2) * 2 + ((self + 1) % 2))
 
-    def slice(self) -> Tuple[Union[int, slice], ...]:
+    def slice(self, width: int = -1) -> Tuple[Union[int, slice], ...]:
         s = slice(None)
-        return ((-1, s, s),
-                (0, s, s),
-                (s, -1, s),
-                (s, 0, s),
-                (s, s, -1),
-                (s, s, 0))[self]
+        s0, s1 = -1, 0
+        if width >= 0:
+            s0 = slice(-1 - width, -1)
+            s1 = slice(0, width)
+        return ((s0, s, s),
+                (s1, s, s),
+                (s, s0, s),
+                (s, s1, s),
+                (s, s, s0),
+                (s, s, s1))[self]
 
     def shape(self, size: int) -> Tuple[int, int, int]:
         return ((1, size, size),
@@ -49,6 +54,33 @@ class ChunkFace(enum.IntEnum):
 
     def __bool__(self):
         return True
+
+    @classmethod
+    def corners(cls) -> Iterator[Tuple["ChunkFace", "ChunkFace", "ChunkFace"]]:
+        return itertools.product((ChunkFace.NORTH, ChunkFace.SOUTH),
+                                 (ChunkFace.TOP, ChunkFace.BOTTOM),
+                                 (ChunkFace.EAST, ChunkFace.WEST))
+
+    @classmethod
+    def corner_slice(cls, x: "ChunkFace", y: "ChunkFace", z: "ChunkFace", width: int = -1) \
+            -> Tuple[Union[int, slice], ...]:
+        s = slice(None)
+        s0, s1 = -1, 0
+        if width >= 0:
+            s0 = slice(-1 - width, -1)
+            s1 = slice(0, width)
+        u = x % 2 == 0
+        v = y % 2 == 0
+        w = z % 2 == 0
+        return (
+            s0 if u else s1,
+            s0 if v else s1,
+            s0 if w else s1
+        )
+
+    @classmethod
+    def corner_direction(cls, x: "ChunkFace", y: "ChunkFace", z: "ChunkFace") -> Vec3i:
+        return np.add(x.direction, y.direction) + z.direction
 
 
 class ChunkHelper:
@@ -240,6 +272,19 @@ class Chunk(Generic[V]):
 
     def any(self) -> bool:
         return np.any(self._value)
+
+    def padding(self, grid: "ChunkGrid[V]", padding: int, corners=False):
+        arr = np.pad(self.to_array(), padding)
+        for face, index in grid.iter_neighbors_indicies(self._index):
+            c = grid.ensure_chunk_at_index(index, insert=False)
+            arr[face.slice(padding)] = c.to_array()[face.flip().slice(padding)]
+        if corners:
+            for u, v, w in ChunkFace.corners():
+                s0 = ChunkFace.corner_slice(u, v, w, width=padding)
+                s1 = ChunkFace.corner_slice(u.flip(), v.flip(), w.flip(), width=padding)
+                d = ChunkFace.corner_direction(u, v, w)
+                arr[s0] = grid.ensure_chunk_at_index(d + self._index, insert=False).to_array()[s1]
+        return arr
 
     def invert(self, inplace=False) -> "Chunk[V]":
         c = self if inplace else self.copy(empty=True)
