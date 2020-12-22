@@ -1,4 +1,6 @@
-from typing import Dict, Union, Tuple, Iterator
+import time
+from contextlib import contextmanager
+from typing import Dict, Union, Tuple, Iterator, Optional
 
 import numpy as np
 
@@ -18,3 +20,12 @@ def merge_default(target: Dict, *args, **kwargs):
         assert isinstance(arg, dict)
         __merge_default(target, arg)
     __merge_default(target, kwargs)
+
+
+@contextmanager
+def timed(prefix: Optional[str] = None):
+    prefix = "Duration: " if prefix is None else prefix
+    start = time.time()
+    yield
+    duration = time.time() - start
+    print(f"{prefix}{duration:.2f}s")
