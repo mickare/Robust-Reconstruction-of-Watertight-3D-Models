@@ -129,8 +129,11 @@ class MeshHelper:
             chunks = tqdm.tqdm(grid.chunks, desc="Building voxel mesh")
         else:
             chunks = grid.chunks
-        vertices, faces = zip(*(cls.chunk_to_voxel_mesh(c, parent=grid, **kwargs) for c in chunks))
-        return cls.reduce_mesh(vertices, faces)
+        if grid.chunks:
+            vertices, faces = zip(*(cls.chunk_to_voxel_mesh(c, parent=grid, **kwargs) for c in chunks))
+            return cls.reduce_mesh(vertices, faces)
+        else:  # no chunks
+            return np.empty((0, 3), dtype=np.float), np.empty((0, 3), dtype=np.int)
 
 
 class VoxelRender:
