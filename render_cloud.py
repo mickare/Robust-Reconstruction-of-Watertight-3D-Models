@@ -76,9 +76,6 @@ class CloudRender:
                 assert len(p) == len(v)
                 points.append(p + c.position_low + 0.5)
                 values.append(v)
-            #
-            # if len(points) > 3:
-            #     break
 
         pts = np.concatenate(points)
         val = np.concatenate(values)
