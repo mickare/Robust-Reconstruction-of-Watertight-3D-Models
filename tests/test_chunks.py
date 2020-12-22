@@ -10,8 +10,8 @@ from data.chunks import ChunkGrid, ChunkFace
 class TestChunkSetter(unittest.TestCase):
     def test_set_pos(self):
         a = ChunkGrid(2, bool, False)
-        a.set_pos((0, 0, 0), True)
-        a.set_pos((2, 2, 2), True)
+        a.set_value((0, 0, 0), True)
+        a.set_value((2, 2, 2), True)
 
         self.assertFalse(a.chunks[0, 0, 0].is_filled())
 
@@ -30,7 +30,7 @@ class TestChunkOperator(unittest.TestCase):
     def test_eq_1(self):
         a = ChunkGrid(2, bool, False)
         b = ChunkGrid(2, bool, False)
-        a.set_pos((0, 0, 0), True)
+        a.set_value((0, 0, 0), True)
         result = (a == b).to_dense()
         self.assertIsInstance((a == b), ChunkGrid)
 
@@ -44,8 +44,8 @@ class TestChunkOperator(unittest.TestCase):
         a = ChunkGrid(2, bool, False)
         b = ChunkGrid(2, bool, False)
 
-        a.set_pos((0, 0, 0), True)
-        a.set_pos((2, 2, 2), True)
+        a.set_value((0, 0, 0), True)
+        a.set_value((2, 2, 2), True)
 
         result = (a == b).to_dense()
         self.assertIsInstance((a == b), ChunkGrid)
@@ -60,9 +60,9 @@ class TestChunkOperator(unittest.TestCase):
     def _test_operator1_bool(self, op):
         a = ChunkGrid(2, bool, False)
 
-        a.set_pos((0, 0, 0), True)
-        a.set_pos((0, 0, 1), True)
-        a.set_pos((0, 1, 0), False)
+        a.set_value((0, 0, 0), True)
+        a.set_value((0, 0, 1), True)
+        a.set_value((0, 1, 0), False)
 
         expected = op(a.to_dense())
         res = op(a)
@@ -74,9 +74,9 @@ class TestChunkOperator(unittest.TestCase):
     def _test_operator1_int(self, op):
         a = ChunkGrid(2, int, -1)
 
-        a.set_pos((0, 0, 0), 0)
-        a.set_pos((0, 0, 1), 2)
-        a.set_pos((0, 1, 0), -2)
+        a.set_value((0, 0, 0), 0)
+        a.set_value((0, 0, 1), 2)
+        a.set_value((0, 1, 0), -2)
 
         expected = op(a.to_dense())
         res = op(a)
@@ -111,13 +111,13 @@ class TestChunkOperator(unittest.TestCase):
         a = ChunkGrid(2, bool, False)
         b = ChunkGrid(2, bool, True)
 
-        a.set_pos((0, 0, 0), True)
-        a.set_pos((0, 0, 1), True)
+        a.set_value((0, 0, 0), True)
+        a.set_value((0, 0, 1), True)
 
-        b.set_pos((0, 0, 0), True)
-        b.set_pos((0, 0, 1), False)
-        b.set_pos((0, 1, 0), False)
-        b.set_pos((0, 1, 1), False)
+        b.set_value((0, 0, 0), True)
+        b.set_value((0, 0, 1), False)
+        b.set_value((0, 1, 0), False)
+        b.set_value((0, 1, 1), False)
 
         a0 = a.copy()
         b0 = b.copy()
@@ -133,12 +133,12 @@ class TestChunkOperator(unittest.TestCase):
         a = ChunkGrid(2, dtype, 0)
         b = ChunkGrid(2, dtype, 1)
 
-        a.set_pos((0, 0, 0), 1)
-        a.set_pos((0, 0, 1), 1)
+        a.set_value((0, 0, 0), 1)
+        a.set_value((0, 0, 1), 1)
 
-        b.set_pos((0, 0, 0), 1 + b0)
-        b.set_pos((0, 1, 0), 0 + b0)
-        b.set_pos((0, 1, 1), 0 + b0)
+        b.set_value((0, 0, 0), 1 + b0)
+        b.set_value((0, 1, 0), 0 + b0)
+        b.set_value((0, 1, 1), 0 + b0)
 
         a0 = a.copy()
         b0 = b.copy()
@@ -282,3 +282,16 @@ class TestChunkOperator(unittest.TestCase):
         self.assertEqual(ChunkFace.BOTTOM.slice(w, other=s), (s, s1, s))
         self.assertEqual(ChunkFace.EAST.slice(w, other=s), (s, s, s0))
         self.assertEqual(ChunkFace.WEST.slice(w, other=s), (s, s, s1))
+
+    def test_reflected(self):
+        grid = ChunkGrid(2, float, -1.0)
+        grid.set_value((0, 0, 0), 0.5)
+        grid.set_value((0, 0, 1), 1.0)
+
+        result = (0 < grid) & (grid < 1.0)
+        actual = result.to_dense()
+
+        expected = np.zeros((2, 2, 2), dtype=bool)
+        expected[0, 0, 0] = True
+
+        self.assertEqual(str(expected), str(actual))
