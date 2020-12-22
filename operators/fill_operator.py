@@ -1,12 +1,9 @@
 import collections
 import functools
-import multiprocessing
-import os
 import sys
-from typing import Optional, List, Tuple, Collection, Union, Set
+from typing import Optional, List, Tuple, Collection, Set
 
 import numpy as np
-import tqdm
 from scipy import ndimage
 
 from data.chunks import Index, ChunkFace, Chunk, ChunkGrid
@@ -144,8 +141,8 @@ class FloodFillOperator:
         dst |= src
         return np.any(old != dst.value)
 
-    def _iterate_fill(self, image: ChunkGrid[bool], tasks: List[FloodFillTask], max_steps: int,
-                      pool: Optional[multiprocessing.Pool] = None, workers: int = -1, **kwargs):
+    def _iterate_fill(self, image: ChunkGrid[bool], tasks: List[FloodFillTask], max_steps: int, **kwargs) \
+            -> ChunkGrid[bool]:
         chunk_shape = self.mask.chunk_shape
         for step in range(1, max_steps + 1):
             if step == max_steps:
@@ -168,13 +165,9 @@ class FloodFillOperator:
 
             # Rebuild tasks for next iteration
             tasks = []
-            if pool is not None:
-                iterator = pool.imap_unordered(self._compute_fill_task, tasks_reduced,
-                                               chunksize=max(1, min(32, len(tasks_reduced) // workers)))
-            else:
-                iterator = (self._compute_fill_task(t) for t in tasks_reduced)
 
-            for res in iterator:
+            for t in tasks_reduced:
+                res = self._compute_fill_task(t)
                 if res is not None:
                     res_mask, res_tasks = res  # type: Chunk, List[FloodFillTask]
                     index = res_mask.index
@@ -189,7 +182,7 @@ class FloodFillOperator:
                 break
         return image
 
-    def fill(self, image: ChunkGrid, max_steps: Optional[int] = None, workers=-1, **kwargs) -> ChunkGrid[bool]:
+    def fill(self, image: ChunkGrid, max_steps: Optional[int] = None, **kwargs) -> ChunkGrid[bool]:
         assert image.chunk_size == self.mask.chunk_size
 
         if max_steps is None:
@@ -206,13 +199,7 @@ class FloodFillOperator:
         if not tasks:
             return image
 
-        if workers > 0:
-            if workers == 1:
-                workers = os.cpu_count()
-            with multiprocessing.Pool(workers) as pool:
-                return self._iterate_fill(image, tasks, max_steps, pool=pool, workers=workers, **kwargs)
-        else:
-            return self._iterate_fill(image, tasks, max_steps)
+        return self._iterate_fill(image, tasks, max_steps)
 
     def fill_at_pos(self, position: Vec3i, *args, **kwargs) -> ChunkGrid[bool]:
         image = ChunkGrid(self.mask.chunk_size, bool, False)
