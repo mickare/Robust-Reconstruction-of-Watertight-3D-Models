@@ -232,7 +232,7 @@ class VoxelRender:
 if __name__ == '__main__':
     from render_cloud import CloudRender
     from model.model_pts import PtsModelLoader
-    from operators.fill_operator import flood_fill_at
+    from filters.fill import flood_fill_at
 
     data = PtsModelLoader().load("models/bunny/bunnyData.pts")
 

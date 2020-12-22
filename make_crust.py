@@ -7,11 +7,10 @@ from data.chunks import ChunkGrid, Chunk
 from data.index_dict import Index
 from mathlib import Vec3i, Vec3f
 from model.model_pts import PtsModelLoader
-from operators.dilate_operator import dilate
-from operators.fill_operator import flood_fill_at
+from filters.dilate import dilate
+from filters.fill import flood_fill_at
 from render_cloud import CloudRender
 from render_voxel import VoxelRender
-
 
 def scale_model(model: np.ndarray, resolution=64) -> Tuple[np.ndarray, Vec3f, float]:
     assert model.ndim == 2 and model.shape[1] == 3
@@ -61,14 +60,14 @@ def points_on_chunk_hull(grid: ChunkGrid[bool], count: Optional[int] = None) -> 
     if len(grid.chunks) == 0:
         return None
 
-    pts_iter = (c.position_low for c in grid.hull() if c.is_filled() and not c.value)
+    pts_iter = (c.position_low for c in grid.iter_hull() if c.is_filled() and not c.value)
     pts = []
     for p, _ in zip(pts_iter, range(count)):
         pts.append(p)
     if pts:
         return np.asarray(pts, dtype=int)
     else:
-        for c in grid.hull():
+        for c in grid.iter_hull():
             if c.any():
                 p = find_empty_point_in_chunk(c)
                 if p is not None:
@@ -77,7 +76,7 @@ def points_on_chunk_hull(grid: ChunkGrid[bool], count: Optional[int] = None) -> 
 
 
 def fill(fill_position: Optional[Vec3i], fill_points: ChunkGrid[bool], components: ChunkGrid[int], mask_empty,
-         color: int) -> (int, ChunkGrid[int]):
+         color: int, verbose=0, max_color=5) -> (int, ChunkGrid[int]):
     while fill_position is not None:
 
         fill_points[fill_position] = True
@@ -103,7 +102,7 @@ def fill(fill_position: Optional[Vec3i], fill_points: ChunkGrid[bool], component
     return color, components
 
 
-def get_crust(chunk_size: int, max_steps: int, revert_steps: int, model: np.ndarray) -> ChunkGrid[bool]:
+def get_crust(chunk_size: int, max_steps: int, revert_steps: int, model: np.ndarray, verbose=0) -> ChunkGrid[bool]:
     crust = ChunkGrid(chunk_size, dtype=bool, fill_value=False)
     crust[model] = True
 
@@ -118,10 +117,10 @@ def get_crust(chunk_size: int, max_steps: int, revert_steps: int, model: np.ndar
         components: ChunkGrid[int] = crust.astype(int).copy()
 
         # Keeping track of starting points for flood fill
-        fill_points = ChunkGrid(CHUNKSIZE, dtype=bool)
+        fill_points = ChunkGrid(chunk_size, dtype=bool)
 
         # find some outer empty chunks that were padded and use it as first fill position of component 2 (= outer fill)
-        # fill_position: Optional[Vec3i] = next(crust.hull()).index * CHUNKSIZE
+        # fill_position: Optional[Vec3i] = next(crust.hull()).index * chunk_size
         fill_position: Optional[Vec3i] = points_on_chunk_hull(crust, count=1)
 
         # Mask for filling, when empty abort!
@@ -189,12 +188,12 @@ if __name__ == '__main__':
     # num_revert_steps, max_color = 5, 3  # cat
 
     verbose = 2
-    CHUNKSIZE = 16
-    max_steps = 2
+    chunk_size = 16
+    max_steps = 3
 
     model, model_offset, model_scale = scale_model(data, resolution=64)
 
-    crust = get_crust(CHUNKSIZE, max_steps, num_revert_steps, model)
+    crust = get_crust(chunk_size, max_steps, num_revert_steps, model)
     diffusion = get_diffusion(crust, model)
 
     ren = VoxelRender()
