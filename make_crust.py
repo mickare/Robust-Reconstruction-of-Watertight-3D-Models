@@ -1,9 +1,10 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 import numpy as np
 from scipy import signal
 
 from data.chunks import ChunkGrid, Chunk
+from data.index_dict import Index
 from mathlib import Vec3i, Vec3f
 from model.model_pts import PtsModelLoader
 from operators.dilate_operator import dilate
@@ -149,8 +150,8 @@ def get_crust(chunk_size: int, max_steps: int, revert_steps: int, model: np.ndar
     return crust
 
 
-def get_diffusion(crust: ChunkGrid[bool], model: np.ndarray, iterations: int = 3):
-    distance = ChunkGrid(crust.chunk_size, dtype=float, fill_value=1)
+def get_diffusion(crust: ChunkGrid[bool], model: np.ndarray, iterations: int = 3) -> ChunkGrid[float]:
+    distance: ChunkGrid[float] = ChunkGrid(crust.chunk_size, dtype=float, fill_value=1.0)
     distance[crust] = 1.0
     distance[model] = 0.0
     kernel = np.array([[[0, 0, 0],
@@ -165,7 +166,7 @@ def get_diffusion(crust: ChunkGrid[bool], model: np.ndarray, iterations: int = 3
     kernel = kernel / 7
 
     for i in range(iterations):
-        points_per_chunk = {}
+        points_per_chunk: Dict[Index, np.ndarray] = {}
         for chunk in distance.chunks:
             points_per_chunk[tuple(chunk.index)] = chunk.to_array() == 0
         for chunk in distance.chunks:
@@ -174,7 +175,7 @@ def get_diffusion(crust: ChunkGrid[bool], model: np.ndarray, iterations: int = 3
             result = result[1:-1, 1:-1, 1:-1]
             result[points_per_chunk[tuple(chunk.index)]] = 0
             chunk.set_array(result)
-    distance[crust == 0] = 1.0
+    distance[crust == False] = 1.0
     return distance
 
 
@@ -189,9 +190,22 @@ if __name__ == '__main__':
 
     verbose = 2
     CHUNKSIZE = 16
-    max_steps = 1
+    max_steps = 2
 
     model, model_offset, model_scale = scale_model(data, resolution=64)
 
     crust = get_crust(CHUNKSIZE, max_steps, num_revert_steps, model)
     diffusion = get_diffusion(crust, model)
+
+    ren = VoxelRender()
+    fig = ren.make_figure()
+    # fig.add_trace(ren.grid_voxel(crust, opacity=0.1, name='Crust'))
+    fig.add_trace(CloudRender().make_value_scatter(diffusion, mask=(crust & (diffusion != 1.0)),
+                                                   name="Diffusion",
+                                                   marker=dict(
+                                                       size=2.0,
+                                                       opacity=0.7,
+                                                       colorscale='Viridis'
+                                                   ),
+                                                   mode="markers", ))
+    fig.show()

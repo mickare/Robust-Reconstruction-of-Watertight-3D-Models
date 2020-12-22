@@ -1,8 +1,9 @@
-from typing import Tuple
+from typing import Tuple, Optional, List
 
 import numpy as np
 import plotly.graph_objects as go
 
+from data.chunks import ChunkGrid, Chunk
 from model.model_mesh import MeshModelLoader
 from utils import merge_default
 
@@ -62,6 +63,28 @@ class CloudRender:
             scene_camera=camera
         )
         return fig
+
+    def make_value_scatter(self, grid: ChunkGrid, mask: ChunkGrid[bool], **kwargs):
+
+        points: List[np.ndarray] = []
+        values: List[np.ndarray] = []
+        for m in mask.chunks:  # type: Chunk
+            c: Chunk = grid.chunks.get(m.index, None)
+            if c.is_array() and c.any():
+                p = np.argwhere(m.to_array())
+                v = c.to_array()[tuple(p.T)]
+                assert len(p) == len(v)
+                points.append(p + c.position_low + 0.5)
+                values.append(v)
+            #
+            # if len(points) > 3:
+            #     break
+
+        pts = np.concatenate(points)
+        val = np.concatenate(values)
+
+        merge_default(kwargs, marker=dict(color=val))
+        return self.make_scatter(pts, **kwargs)
 
     def plot(self, *args: np.ndarray, size=0.5, **kwargs):
         fig = self.make_figure()
