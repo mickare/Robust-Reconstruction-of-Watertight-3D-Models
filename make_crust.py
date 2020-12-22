@@ -95,6 +95,8 @@ def fill(fill_position: Optional[Vec3i], fill_points: ChunkGrid[bool], component
 
         # Find next fill position
         fill_position = find_empty_fill_position(mask_empty)
+        if color > max_color:
+            break
         color += 1  # Increment color
     return color, components
 
@@ -154,6 +156,7 @@ if __name__ == '__main__':
     CHUNKSIZE = 16
     max_steps = 20
     num_revert_steps = 5
+    max_color = 2
 
     model, model_offset, model_scale = scale_model(data, resolution=64)
 
