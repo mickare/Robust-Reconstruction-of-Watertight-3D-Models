@@ -1,10 +1,10 @@
 from typing import Optional, Tuple
 
 import numpy as np
+from scipy import signal
 
 from data.chunks import ChunkGrid, Chunk
 from mathlib import Vec3i, Vec3f
-from model.model_mesh import MeshModelLoader
 from model.model_pts import PtsModelLoader
 from operators.dilate_operator import dilate
 from operators.fill_operator import flood_fill_at
@@ -75,7 +75,8 @@ def points_on_chunk_hull(grid: ChunkGrid[bool], count: Optional[int] = None) -> 
     return None
 
 
-def fill(fill_position: Optional[Vec3i], fill_points: ChunkGrid[bool], components: ChunkGrid[int], mask_empty, color: int) -> (int, ChunkGrid[int]):
+def fill(fill_position: Optional[Vec3i], fill_points: ChunkGrid[bool], components: ChunkGrid[int], mask_empty,
+         color: int) -> (int, ChunkGrid[int]):
     while fill_position is not None:
 
         fill_points[fill_position] = True
@@ -145,6 +146,36 @@ def get_crust(chunk_size: int, max_steps: int, revert_steps: int, model: np.ndar
         if len(last_crust) > revert_steps:
             last_crust.pop(0)
         crust = dilate(crust)
+    return crust
+
+
+def get_diffusion(crust: ChunkGrid[bool], model: np.ndarray, iterations: int = 3):
+    distance = ChunkGrid(crust.chunk_size, dtype=float, fill_value=1)
+    distance[crust] = 1.0
+    distance[model] = 0.0
+    kernel = np.array([[[0, 0, 0],
+                        [0, 1, 0],
+                        [0, 0, 0]],
+                       [[0, 1, 0],
+                        [1, 1, 1],
+                        [0, 1, 0]],
+                       [[0, 0, 0],
+                        [0, 1, 0],
+                        [0, 0, 0]]], dtype=float)
+    kernel = kernel / 7
+
+    for i in range(iterations):
+        points_per_chunk = {}
+        for chunk in distance.chunks:
+            points_per_chunk[tuple(chunk.index)] = chunk.to_array() == 0
+        for chunk in distance.chunks:
+            padded_chunk = chunk.padding(distance, 1)
+            result = signal.convolve(padded_chunk, kernel, mode='same')
+            result = result[1:-1, 1:-1, 1:-1]
+            result[points_per_chunk[tuple(chunk.index)]] = 0
+            chunk.set_array(result)
+    distance[crust == 0] = 1.0
+    return distance
 
 
 if __name__ == '__main__':
@@ -158,8 +189,9 @@ if __name__ == '__main__':
 
     verbose = 2
     CHUNKSIZE = 16
-    max_steps = 20
+    max_steps = 1
 
     model, model_offset, model_scale = scale_model(data, resolution=64)
 
     crust = get_crust(CHUNKSIZE, max_steps, num_revert_steps, model)
+    diffusion = get_diffusion(crust, model)
