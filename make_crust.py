@@ -75,7 +75,7 @@ if __name__ == '__main__':
     crust.pad_chunks(1)
 
     # A counter of the components per step
-    last_crust: ChunkGrid[bool] = crust
+    last_crust: [ChunkGrid[bool]] = [crust]
     last_count = 0
     for step in range(0, max_steps):
         # Initialize empty component grid
@@ -99,7 +99,6 @@ if __name__ == '__main__':
 
             if not mask_empty.any():
                 raise ValueError("WTF")
-                break
 
             if verbose > 2:
                 print(f"c:\t{color} \tpos: {fill_position},")
@@ -125,13 +124,16 @@ if __name__ == '__main__':
 
         if verbose > 1:
             print(last_count, "->", count)
-        if last_count > count and count == 2:  # 2 for (Crust and Outer-fill)
+        if count == 1:  # 2 for (Crust and Outer-fill)
             if verbose > 0:
                 print("Winner winner chicken dinner!")
+            crust = last_crust[0]
             break
 
         last_count = count
-        last_crust = crust.copy()
+        last_crust.append(crust.copy())
+        if len(last_crust) > 3:
+            last_crust.pop(0)
         crust = dilate(crust)
 
     #
