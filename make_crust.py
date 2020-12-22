@@ -1,3 +1,4 @@
+import random
 from typing import Optional, Tuple, List
 
 import numpy as np
@@ -48,6 +49,14 @@ def plot(components: ChunkGrid[int], colors: int = 0,
     fig.show()
 
 
+def points_on_chunk_hull(grid: ChunkGrid[bool], count: Optional[int] = None) -> np.ndarray:
+    if len(grid.chunks) == 0:
+        return np.array([(0, 0, 0)], dtype=int)
+
+    pts = [c.position_low for c in grid.hull() if c.is_filled() and not c.value]
+    return np.array(pts[:count], dtype=int)
+
+
 if __name__ == '__main__':
     data = PtsModelLoader().load("models/bunny/bunnyData.pts")
     # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
@@ -75,8 +84,9 @@ if __name__ == '__main__':
         # Keeping track of starting points for flood fill
         fill_points = ChunkGrid(CHUNKSIZE, dtype=bool)
 
-        # find any outer empty chunk that was padded and use it as first fill position of component 2 (= outer fill)
-        fill_position: Optional[Vec3i] = next(crust.hull()).index * CHUNKSIZE
+        # find some outer empty chunks that were padded and use it as first fill position of component 2 (= outer fill)
+        # fill_position: Optional[Vec3i] = next(crust.hull()).index * CHUNKSIZE
+        fill_position: Optional[Vec3i] = points_on_chunk_hull(crust, count=1)
 
         # Mask for filling, when empty abort!
         mask_empty = components == 0
@@ -85,7 +95,7 @@ if __name__ == '__main__':
         color = 2
         while fill_position is not None:
 
-            fill_points.set_pos(fill_position, True)
+            fill_points[fill_position] = True
 
             if not mask_empty.any():
                 raise ValueError("WTF")
