@@ -540,8 +540,25 @@ class ChunkGrid(Generic[V]):
             return self.to_sparse(*item)
         elif isinstance(item, ChunkGrid):
             return self.where(item)
+        elif isinstance(item, np.ndarray):
+            return self._get_positions(item)
         else:
             raise IndexError("Invalid get")
+
+    def _get_positions(self, pos: Vec3i):
+        pos = np.asarray(pos, dtype=int)
+        if pos.shape == (3,):
+            return self.get_pos(pos)
+        else:
+            assert pos.ndim == 2 and pos.shape[1] == 3
+            cind, cinv = np.unique(pos // self._chunk_size, axis=0, return_inverse=True)
+            result = np.zeros(len(cinv), dtype=self._dtype)
+            for n, i in enumerate(cind):
+                pind = np.argwhere(cinv == n).flatten()
+                cpos = pos[pind]
+                chunk = self.ensure_chunk_at_index(i, insert=False)
+                result[pind] = chunk.to_array()[tuple(cpos.T)]
+            return result
 
     def get_pos(self, pos: Vec3i) -> V:
         index = self.chunk_index(pos)
