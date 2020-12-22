@@ -6,6 +6,7 @@ import tqdm
 
 from data.chunks import Chunk, ChunkGrid, ChunkFace
 from mathlib import Vec3f
+from utils import merge_default
 
 
 class MeshHelper:
@@ -94,11 +95,12 @@ class MeshHelper:
         return cls._create_mesh_from_deltas(dx, dy, dz)
 
     @classmethod
-    def chunk_to_voxel_mesh(cls, chunk: Chunk, parent: Optional[ChunkGrid] = None) -> Tuple[np.ndarray, np.ndarray]:
+    def chunk_to_voxel_mesh(cls, chunk: Chunk, parent: Optional[ChunkGrid] = None, chunked=False) -> Tuple[
+        np.ndarray, np.ndarray]:
 
         if not chunk.any():
             return np.empty((0, 3), dtype=np.float), np.empty((0, 3), dtype=np.int)
-        elif chunk.is_filled():
+        elif chunk.is_filled() and chunked:
             vertices = np.array([
                 (0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1),
                 (1, 0, 0), (1, 0, 1), (1, 1, 0), (1, 1, 1)
@@ -122,12 +124,12 @@ class MeshHelper:
             return vertices + chunk.index * chunk.size, faces
 
     @classmethod
-    def grid_to_voxel_mesh(cls, grid: ChunkGrid, verbose=False):
+    def grid_to_voxel_mesh(cls, grid: ChunkGrid, verbose=False, **kwargs):
         if verbose:
             chunks = tqdm.tqdm(grid.chunks, desc="Building voxel mesh")
         else:
             chunks = grid.chunks
-        vertices, faces = zip(*(cls.chunk_to_voxel_mesh(c, parent=grid) for c in chunks))
+        vertices, faces = zip(*(cls.chunk_to_voxel_mesh(c, parent=grid, **kwargs) for c in chunks))
         return cls.reduce_mesh(vertices, faces)
 
 
@@ -135,6 +137,31 @@ class VoxelRender:
 
     def __init__(self, flip_zy=True):
         self.flip_zy = flip_zy
+        self.default_mesh_kwargs = dict(
+            lighting=dict(
+                ambient=0.4,
+                diffuse=0.5,
+                facenormalsepsilon=0.0000000000001,
+                fresnel=0.001,
+                roughness=0.9,
+                specular=0.1,
+            ),
+            flatshading=True,
+        )
+
+    def _hovertemplate(self):
+        if self.flip_zy:
+            return """
+<b>x:</b> %{x}<br>
+<b>y:</b> %{z}<br>
+<b>z:</b> %{y}<br>
+"""
+        else:
+            return """
+<b>x:</b> %{x}<br>
+<b>y:</b> %{y}<br>
+<b>z:</b> %{z}<br>
+"""
 
     def _unwrap(self, pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         x, y, z = pts.T
@@ -146,20 +173,16 @@ class VoxelRender:
         vertices, faces = MeshHelper.extract_voxel_mesh(dense)
         return self.make_mesh(vertices, faces, **kwargs)
 
-    def grid_voxel(self, grid: ChunkGrid, verbose=False, **kwargs):
-        vertices, faces = MeshHelper.grid_to_voxel_mesh(grid, verbose=verbose)
+    def grid_voxel(self, grid: ChunkGrid, verbose=False, chunked=False, **kwargs):
+        vertices, faces = MeshHelper.grid_to_voxel_mesh(grid, verbose=verbose, chunked=chunked)
         return self.make_mesh(vertices, faces, **kwargs)
 
     def make_mesh(self, vertices: np.ndarray, faces: np.ndarray,
                   scale=1.0, offset: Optional[Vec3f] = None, **kwargs):
+        merge_default(kwargs, **self.default_mesh_kwargs,
+                      hovertemplate=self._hovertemplate())
         kwargs.setdefault("flatshading", True)
         kwargs.setdefault("lighting", dict(
-            ambient=0.4,
-            diffuse=0.5,
-            facenormalsepsilon=0.0000000000001,
-            fresnel=0.001,
-            roughness=0.9,
-            specular=0.1,
         ))
 
         offset = (0, 0, 0) if offset is None else offset
@@ -172,12 +195,19 @@ class VoxelRender:
     def make_figure(self, **kwargs) -> go.Figure:
         fig = go.Figure()
         camera = dict(
-            up=dict(x=0, y=1, z=0)
+            up=dict(x=0, y=1, z=0),
+            eye=dict(x=-1, y=-1, z=0.5)
         )
+        yaxis = dict()
+        zaxis = dict()
+        if self.flip_zy:
+            yaxis.setdefault("autorange", "reversed")
         fig.update_layout(
             yaxis=dict(scaleanchor="x", scaleratio=1),
             scene=dict(
                 aspectmode='data',
+                yaxis=yaxis,
+                zaxis=zaxis,
                 xaxis_title='X',
                 yaxis_title='Y' if not self.flip_zy else 'Z',
                 zaxis_title='Z' if not self.flip_zy else 'Y',
