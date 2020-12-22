@@ -152,11 +152,13 @@ if __name__ == '__main__':
     # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
     # data = MeshModelLoader(samples=30000, noise=0.1).load("models/cat/cat_reference.obj")
 
+    num_revert_steps, max_color = 5, 3  # bunny
+    # num_revert_steps, max_color = 5, 3  # dragon
+    # num_revert_steps, max_color = 5, 3  # cat
+
     verbose = 2
     CHUNKSIZE = 16
     max_steps = 20
-    num_revert_steps = 5
-    max_color = 3
 
     model, model_offset, model_scale = scale_model(data, resolution=64)
 
