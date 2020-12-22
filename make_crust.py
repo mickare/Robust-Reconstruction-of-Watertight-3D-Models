@@ -171,8 +171,8 @@ def get_diffusion(crust: ChunkGrid[bool], model: np.ndarray, iterations: int = 3
             points_per_chunk[tuple(chunk.index)] = chunk.to_array() == 0
         for chunk in distance.chunks:
             padded_chunk = chunk.padding(distance, 1)
-            result = signal.convolve(padded_chunk, kernel, mode='same')
-            result = result[1:-1, 1:-1, 1:-1]
+            result = signal.convolve(padded_chunk, kernel, mode='valid')
+            # result = result[1:-1, 1:-1, 1:-1]
             result[points_per_chunk[tuple(chunk.index)]] = 0
             chunk.set_array(result)
     distance[crust == False] = 1.0
