@@ -1,5 +1,4 @@
-import random
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -57,6 +56,76 @@ def points_on_chunk_hull(grid: ChunkGrid[bool], count: Optional[int] = None) -> 
     return np.array(pts[:count], dtype=int)
 
 
+def fill(fill_position: Optional[Vec3i], fill_points: ChunkGrid[bool], components: ChunkGrid[int], mask_empty, color: int) -> (int, ChunkGrid[int]):
+    while fill_position is not None:
+
+        fill_points[fill_position] = True
+
+        if not mask_empty.any():
+            raise ValueError("WTF")
+
+        if verbose > 2:
+            print(f"c:\t{color} \tpos: {fill_position},")
+
+        # Flood fill the position with the current color
+        fill_mask = flood_fill_at(fill_position, mask=mask_empty, verbose=verbose > 5)
+        components[fill_mask] = color
+
+        # Update mask
+        mask_empty = components == 0
+
+        # Find next fill position
+        fill_position = find_empty_fill_position(mask_empty)
+        color += 1  # Increment color
+    return color, components
+
+
+def get_crust(chunk_size: int, max_steps: int, revert_steps: int, model: np.ndarray) -> ChunkGrid[bool]:
+    crust = ChunkGrid(chunk_size, dtype=bool, fill_value=False)
+    crust[model] = True
+
+    # Add a chunk layer around the model (fast-flood-fill can wrap the model immediately)
+    crust.pad_chunks(1)
+
+    # A counter of the components per step
+    last_crust: [ChunkGrid[bool]] = [crust]
+    last_count = 0
+    for step in range(0, max_steps):
+        # Initialize empty component grid
+        components: ChunkGrid[int] = crust.astype(int).copy()
+
+        # Keeping track of starting points for flood fill
+        fill_points = ChunkGrid(CHUNKSIZE, dtype=bool)
+
+        # find some outer empty chunks that were padded and use it as first fill position of component 2 (= outer fill)
+        # fill_position: Optional[Vec3i] = next(crust.hull()).index * CHUNKSIZE
+        fill_position: Optional[Vec3i] = points_on_chunk_hull(crust, count=1)
+
+        # Mask for filling, when empty abort!
+        mask_empty = components == 0
+
+        # Color value of the filled components
+        color = 2
+        color, components = fill(fill_position, fill_points, components, mask_empty, color)
+
+        plot(components, color, model, fill_points)
+
+        count = color - 1
+
+        if verbose > 1:
+            print(last_count, "->", count)
+        if count == 1:
+            if verbose > 0:
+                print("Winner winner chicken dinner!")
+            return last_crust[0]
+
+        last_count = count
+        last_crust.append(crust.copy())
+        if len(last_crust) > revert_steps:
+            last_crust.pop(0)
+        crust = dilate(crust)
+
+
 if __name__ == '__main__':
     data = PtsModelLoader().load("models/bunny/bunnyData.pts")
     # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
@@ -65,9 +134,12 @@ if __name__ == '__main__':
     verbose = 2
     CHUNKSIZE = 16
     max_steps = 20
+    num_revert_steps = 5
 
     model, model_offset, model_scale = scale_model(data, resolution=64)
 
+    crust = get_crust(CHUNKSIZE, max_steps, num_revert_steps, model)
+    """
     crust = ChunkGrid(CHUNKSIZE, dtype=bool, fill_value=False)
     crust[model] = True
 
@@ -93,30 +165,7 @@ if __name__ == '__main__':
 
         # Color value of the filled components
         color = 2
-        while fill_position is not None:
-
-            fill_points[fill_position] = True
-
-            if not mask_empty.any():
-                raise ValueError("WTF")
-
-            if verbose > 2:
-                print(f"c:\t{color} \tpos: {fill_position},")
-
-            # Flood fill the position with the current color
-            fill_mask = flood_fill_at(fill_position, mask=mask_empty, verbose=verbose > 5)
-            old = components.copy()
-            components[fill_mask] = color
-
-            # Update mask
-            mask_empty = components == 0
-
-            # Find next fill position
-            fill_position = find_empty_fill_position(mask_empty)
-            color += 1  # Increment color
-
-            # if step == 0:
-            #     print("fill_position is None = ", fill_position is None)
+        color, components = fill(fill_position, components, mask_empty, color)
 
         plot(components, color, model, fill_points)
 
@@ -124,7 +173,7 @@ if __name__ == '__main__':
 
         if verbose > 1:
             print(last_count, "->", count)
-        if count == 1:  # 2 for (Crust and Outer-fill)
+        if count == 1:
             if verbose > 0:
                 print("Winner winner chicken dinner!")
             crust = last_crust[0]
@@ -135,36 +184,4 @@ if __name__ == '__main__':
         if len(last_crust) > 3:
             last_crust.pop(0)
         crust = dilate(crust)
-
-    #
-    # while comps > 1:
-    #     dilated = dilate(color == 1)
-    #     color[dilated] = 1
-    #
-    #     colors = 2
-    #     while True:
-    #         start = np.array([])
-    #         for i, c in color.chunks.items():
-    #             if not c.all():
-    #                 start = np.argwhere(np.logical_not(c.to_array()))[0] + c.index * color.chunk_size
-    #                 break
-    #
-    #         if start.size == 0:
-    #             break
-    #
-    #         fill_mask = flood_fill_at(start, color == 0)
-    #         color[fill_mask] = colors
-    #         colors += 1
-    #
-    #     comps = colors - 1
-    #     print(comps)
-    #     ren = VoxelRender()
-    #     fig = ren.make_figure()
-    #     fig.add_trace(ren.grid_voxel(crust, opacity=0.2, flatshading=True, name='crust'))
-    #     for c in range(colors):
-    #         if c == 2 or c == 1:
-    #             continue
-    #         fig.add_trace(ren.grid_voxel(color == c, opacity=1.0, flatshading=True, name=str(c)))
-    #     fig.add_trace(CloudRender().make_scatter(scaled, marker=dict(size=0.5)))
-    #     fig.show()
-    #     color[color != 1] = 0
+    """
