@@ -153,6 +153,9 @@ class Chunk(Generic[V]):
     def inner(self, pos: Vec3i) -> np.ndarray:
         return np.asarray(pos, dtype=np.int) % self._size
 
+    def get_pos(self, pos: Vec3i) -> V:
+        return self.to_array()[tuple(self.inner(pos))]
+
     def set_pos(self, pos: Vec3i, value: V):
         inner = self.inner(pos)
         arr = self.to_array()
@@ -165,14 +168,14 @@ class Chunk(Generic[V]):
         else:
             self.set_pos(pos, value)
 
-    def set_fill(self, value: V):
+    def set_fill(self, value: V) -> "Chunk[V]":
         self._value = value
         self._is_filled = True
         return self
 
-    def set_array(self, value: np.ndarray):
+    def set_array(self, value: np.ndarray) -> "Chunk[V]":
         assert self.shape == value.shape, f"{self.shape} != {value.shape}"
-        self._value = np.asarray(value, dtype=self._dtype)
+        self._value = np.array(value, dtype=self._dtype)
         self._is_filled = False
         return self
 
@@ -432,7 +435,7 @@ class ChunkGrid(Generic[V]):
             grid_new.chunks.insert(src.index, src.convert(func, func_vec))
         return grid_new
 
-    def copy(self, empty=False, dtype=None):
+    def copy(self, empty=False, dtype: Optional[Type[M]] = None) -> "ChunkGrid[M]":
         dtype = dtype or self._dtype
         new = ChunkGrid(self._chunk_size, dtype, dtype(self._fill_value))
         if not empty:
@@ -537,6 +540,14 @@ class ChunkGrid(Generic[V]):
             return self.where(item)
         else:
             raise IndexError("Invalid get")
+
+    def get_pos(self, pos: Vec3i) -> V:
+        index = self.chunk_index(pos)
+        c: Chunk[V] = self.chunks.get(index, None)
+        if c is None:
+            return self._fill_value
+        else:
+            return c.get_pos(pos)
 
     def set_pos(self, pos: Vec3i, value: V) -> Chunk[V]:
         c = self.ensure_chunk_at_pos(pos)
@@ -651,10 +662,15 @@ class ChunkGrid(Generic[V]):
 
     def _operator2(self, other: Union["ChunkGrid[V]", np.ndarray, V],
                    op: Callable[[Chunk[V], Union[Chunk[M], np.ndarray, M]], Union[Chunk[M]]],
-                   dtype: Optional[Type[M]] = None, inplace=False, ) -> "ChunkGrid[M]":
+                   dtype: Optional[Type[M]] = None, inplace=False) -> "ChunkGrid[M]":
         dtype = dtype or self.dtype
         # Inplace selection
         new_grid = self if inplace else self.copy(empty=True, dtype=dtype)
+
+        if inplace:
+            # Update data type
+            for c in new_grid.chunks.values():
+                c._dtype = dtype
 
         if isinstance(other, ChunkGrid):
             assert new_grid._chunk_size == other._chunk_size
@@ -686,7 +702,6 @@ class ChunkGrid(Generic[V]):
                     new_grid._fill_value = dtype(self._fill_value)
                 except Exception:
                     pass
-
         return new_grid
 
     # Operators
