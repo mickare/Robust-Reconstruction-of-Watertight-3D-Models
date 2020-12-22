@@ -31,8 +31,11 @@ class ChunkFace(enum.IntEnum):
     def flip(self) -> "ChunkFace":
         return ChunkFace((self // 2) * 2 + ((self + 1) % 2))
 
-    def slice(self, width: int = -1) -> Tuple[Union[int, slice], ...]:
-        s = slice(None)
+    def slice(self, width: int = -1, other: Optional[slice] = None) -> Tuple[Union[int, slice], ...]:
+        if other is None:
+            s = slice(None)
+        else:
+            s = other
         s0, s1 = -1, 0
         if width >= 0:
             s0 = slice(-1 - width, -1)
@@ -295,7 +298,8 @@ class Chunk(Generic[V]):
         arr = np.pad(self.to_array(), padding)
         for face, index in grid.iter_neighbors_indicies(self._index):
             c = grid.ensure_chunk_at_index(index, insert=False)
-            arr[face.slice(padding)] = np.pad(c.to_array(), padding)[face.flip().slice(padding)]
+            pad = c.to_array()[face.flip().slice(padding)]
+            arr[face.slice(padding, other=slice(padding, -padding))] = pad
         if corners:
             for u, v, w in ChunkFace.corners():
                 s0 = ChunkFace.corner_slice(u, v, w, width=padding)
