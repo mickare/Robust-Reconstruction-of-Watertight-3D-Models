@@ -212,3 +212,21 @@ class TestChunkOperator(unittest.TestCase):
     #
     #     assert result.shape == expected.shape
     #     self.assertTrue(np.all(result == expected), f"Failure! \n{result}\n-------\n{expected}")
+
+    def test_padding(self):
+        grid = ChunkGrid(2, bool, False)
+        grid.ensure_chunk_at_index((0, 0, 0))
+        grid.ensure_chunk_at_index((0, 0, 1))
+        grid.ensure_chunk_at_index((0, 1, 0))
+        grid.ensure_chunk_at_index((0, 1, 1))
+
+        t = grid.chunks[(0, 0, 1)]
+        t.set_fill(True)
+
+        c = grid.chunks[(0, 0, 0)]
+        pad = c.padding(grid, 1)
+        actual = pad[:, :-1]
+        expected = t.to_array()[:, :, 0]
+
+        assert actual.shape == expected.shape
+        self.assertTrue(np.all(actual == expected), f"Failure! \n{actual}\n-------\n{expected}")
