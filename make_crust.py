@@ -135,7 +135,7 @@ def get_crust(chunk_size: int, max_steps: int, revert_steps: int, model: np.ndar
 
         if verbose > 1:
             print(last_count, "->", count)
-        if count == 1:
+        if count == 2:
             if verbose > 0:
                 print("Winner winner chicken dinner!")
             return last_crust[0]
@@ -156,7 +156,7 @@ if __name__ == '__main__':
     CHUNKSIZE = 16
     max_steps = 20
     num_revert_steps = 5
-    max_color = 2
+    max_color = 3
 
     model, model_offset, model_scale = scale_model(data, resolution=64)
 
