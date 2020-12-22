@@ -456,7 +456,9 @@ class ChunkGrid(Generic[V]):
         return Chunk(index, self._chunk_size, self._dtype, self._fill_value)
 
     def chunk_index(self, pos: Vec3i):
-        return np.asarray(pos, dtype=np.int) // self._chunk_size
+        res = np.asarray(pos, dtype=np.int) // self._chunk_size
+        assert res.shape == (3,)
+        return res
 
     def chunk_at_pos(self, pos: Vec3i) -> Optional[Chunk[V]]:
         return self.chunks.get(self.chunk_index(pos))
@@ -582,14 +584,15 @@ class ChunkGrid(Generic[V]):
         pos = np.asarray(pos, dtype=int)
         if pos.shape == (3,):
             self.set_pos(pos, value)
-        assert pos.ndim == 2 and pos.shape[1] == 3
-        if isinstance(value, (list, tuple, np.ndarray)):
-            assert len(pos) == len(value)
-            for p, v in zip(pos, value):
-                self.set_pos(p, v)
         else:
-            for p in pos:
-                self.set_pos(p, value)
+            assert pos.ndim == 2 and pos.shape[1] == 3, f"shape={pos.shape}"
+            if isinstance(value, (list, tuple, np.ndarray)):
+                assert len(pos) == len(value)
+                for p, v in zip(pos, value):
+                    self.set_pos(p, v)
+            else:
+                for p in pos:
+                    self.set_pos(p, value)
 
     def _set_chunks(self, other: "ChunkGrid", value: Union[V, np.ndarray, Chunk[V]]):
         assert self._chunk_size == other._chunk_size
