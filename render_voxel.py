@@ -98,30 +98,30 @@ class MeshHelper:
     def chunk_to_voxel_mesh(cls, chunk: Chunk, parent: Optional[ChunkGrid] = None, chunked=False) -> Tuple[
         np.ndarray, np.ndarray]:
 
-        if not chunk.any():
-            return np.empty((0, 3), dtype=np.float), np.empty((0, 3), dtype=np.int)
-        elif chunk.is_filled() and chunked:
-            vertices = np.array([
-                (0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1),
-                (1, 0, 0), (1, 0, 1), (1, 1, 0), (1, 1, 1)
-            ], dtype=np.float) * chunk.size
-            faces = np.array([
-                (0, 1, 2), (3, 2, 1),  # Face
-                (2, 3, 6), (7, 6, 3),  #
-                (3, 1, 7), (5, 7, 1),  #
-                (7, 5, 6), (4, 6, 5),  #
-                (5, 1, 4), (0, 4, 1),  #
-                (4, 0, 6), (2, 6, 0)
-            ], dtype=np.int)
-            return vertices + chunk.index * chunk.size, faces
-        else:
-            neighbors: List[Optional[Chunk]] = [None] * 6
-            if parent is not None:
-                neighbors = [c for f, c in parent.iter_neighbors(chunk.index, flatten=False)]
-                assert len(neighbors) == 6
+        if chunk.any():
+            if chunk.is_filled() and chunked:
+                vertices = np.array([
+                    (0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1),
+                    (1, 0, 0), (1, 0, 1), (1, 1, 0), (1, 1, 1)
+                ], dtype=np.float) * chunk.size
+                faces = np.array([
+                    (0, 1, 2), (3, 2, 1),  # Face
+                    (2, 3, 6), (7, 6, 3),  #
+                    (3, 1, 7), (5, 7, 1),  #
+                    (7, 5, 6), (4, 6, 5),  #
+                    (5, 1, 4), (0, 4, 1),  #
+                    (4, 0, 6), (2, 6, 0)
+                ], dtype=np.int)
+                return vertices + chunk.index * chunk.size, faces
+            else:
+                neighbors: List[Optional[Chunk]] = [None] * 6
+                if parent is not None:
+                    neighbors = [c for f, c in parent.iter_neighbors(chunk.index, flatten=False)]
+                    assert len(neighbors) == 6
 
-            vertices, faces = cls.extract_voxel_mesh(chunk.to_array(), neighbors=neighbors)
-            return vertices + chunk.index * chunk.size, faces
+                vertices, faces = cls.extract_voxel_mesh(chunk.to_array(), neighbors=neighbors)
+                return vertices + chunk.index * chunk.size, faces
+        return np.empty((0, 3), dtype=np.float), np.empty((0, 3), dtype=np.int)
 
     @classmethod
     def grid_to_voxel_mesh(cls, grid: ChunkGrid, verbose=False, **kwargs):
