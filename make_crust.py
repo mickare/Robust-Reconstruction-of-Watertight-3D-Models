@@ -2,8 +2,9 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from data.chunks import ChunkGrid
+from data.chunks import ChunkGrid, Chunk
 from mathlib import Vec3i, Vec3f
+from model.model_mesh import MeshModelLoader
 from model.model_pts import PtsModelLoader
 from operators.dilate_operator import dilate
 from operators.fill_operator import flood_fill_at
@@ -22,10 +23,17 @@ def scale_model(model: np.ndarray, resolution=64) -> Tuple[np.ndarray, Vec3f, fl
     return scaled, model_min, scale_factor
 
 
+def find_empty_point_in_chunk(chunk: Chunk[bool]) -> Optional[Vec3i]:
+    pt = np.argwhere(chunk.to_array())
+    if len(pt) > 0:
+        return pt[0] + chunk.position_low
+    return None
+
+
 def find_empty_fill_position(mask: ChunkGrid[bool]) -> Optional[Vec3i]:
     for i, c in mask.chunks.items():
         if c.any():
-            return np.argwhere(c.to_array())[0] + c.position_low
+            return find_empty_point_in_chunk(c)
     return None
 
 
@@ -48,12 +56,23 @@ def plot(components: ChunkGrid[int], colors: int = 0,
     fig.show()
 
 
-def points_on_chunk_hull(grid: ChunkGrid[bool], count: Optional[int] = None) -> np.ndarray:
+def points_on_chunk_hull(grid: ChunkGrid[bool], count: Optional[int] = None) -> Optional[np.ndarray]:
     if len(grid.chunks) == 0:
-        return np.array([(0, 0, 0)], dtype=int)
+        return None
 
-    pts = [c.position_low for c in grid.hull() if c.is_filled() and not c.value]
-    return np.array(pts[:count], dtype=int)
+    pts_iter = (c.position_low for c in grid.hull() if c.is_filled() and not c.value)
+    pts = []
+    for p, _ in zip(pts_iter, range(count)):
+        pts.append(p)
+    if pts:
+        return np.asarray(pts, dtype=int)
+    else:
+        for c in grid.hull():
+            if c.any():
+                p = find_empty_point_in_chunk(c)
+                if p is not None:
+                    return p
+    return None
 
 
 def fill(fill_position: Optional[Vec3i], fill_points: ChunkGrid[bool], components: ChunkGrid[int], mask_empty, color: int) -> (int, ChunkGrid[int]):
