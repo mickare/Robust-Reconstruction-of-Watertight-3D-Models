@@ -4,7 +4,7 @@ from typing import Type
 
 import numpy as np
 
-from data.chunks import ChunkGrid
+from data.chunks import ChunkGrid, ChunkFace
 
 
 class TestChunkSetter(unittest.TestCase):
@@ -214,19 +214,71 @@ class TestChunkOperator(unittest.TestCase):
     #     self.assertTrue(np.all(result == expected), f"Failure! \n{result}\n-------\n{expected}")
 
     def test_padding(self):
-        grid = ChunkGrid(2, bool, False)
-        grid.ensure_chunk_at_index((0, 0, 0))
-        grid.ensure_chunk_at_index((0, 0, 1))
-        grid.ensure_chunk_at_index((0, 1, 0))
-        grid.ensure_chunk_at_index((0, 1, 1))
+        grid = ChunkGrid(2, int, -1)
+        grid.ensure_chunk_at_index((0, 0, 0)).set_fill(1)
+        grid.ensure_chunk_at_index((0, 0, 1)).set_fill(2)
+        grid.ensure_chunk_at_index((0, 1, 0)).set_fill(3)
+        grid.ensure_chunk_at_index((0, 1, 1)).set_fill(4)
 
         t = grid.chunks[(0, 0, 1)]
-        t.set_fill(True)
+        t.set_array(np.array([
+            [(111, 112), (121, 122)],
+            [(211, 212), (221, 222)]
+        ]))
+        expected1 = t.to_array()[:, :, 0]
 
-        c = grid.chunks[(0, 0, 0)]
+        c = grid.chunks.get((0, 0, 0))
         pad = c.padding(grid, 1)
-        actual = pad[:, :-1]
-        expected = t.to_array()[:, :, 0]
+        actual = pad
 
-        assert actual.shape == expected.shape
-        self.assertTrue(np.all(actual == expected), f"Failure! \n{actual}\n-------\n{expected}")
+        expected = np.ones((4, 4, 4), int) * -1
+        expected[1:3, 1:3, 1:3] = 1
+        expected[1:-1, 1:-1, -1] = expected1
+        expected[1:-1, -1, 1:-1] = 3
+
+        assert actual.shape == expected.shape, f"Shape! \n{actual.shape}\n-------\n{expected.shape}"
+        # self.assertTrue(np.all(actual == expected), f"Failure! \n{actual}\n-------\n{expected}")
+        self.assertEqual(str(expected), str(actual))
+
+    def test_face_slicing(self):
+        s = slice(None)
+        s0 = -1
+        s1 = 0
+        self.assertEqual(ChunkFace.NORTH.slice(), (s0, s, s))
+        self.assertEqual(ChunkFace.SOUTH.slice(), (s1, s, s))
+        self.assertEqual(ChunkFace.TOP.slice(), (s, s0, s))
+        self.assertEqual(ChunkFace.BOTTOM.slice(), (s, s1, s))
+        self.assertEqual(ChunkFace.EAST.slice(), (s, s, s0))
+        self.assertEqual(ChunkFace.WEST.slice(), (s, s, s1))
+
+        w = 1
+        s0 = slice(- w, None)
+        s1 = slice(None, w)
+        self.assertEqual(ChunkFace.NORTH.slice(w), (s0, s, s))
+        self.assertEqual(ChunkFace.SOUTH.slice(w), (s1, s, s))
+        self.assertEqual(ChunkFace.TOP.slice(w), (s, s0, s))
+        self.assertEqual(ChunkFace.BOTTOM.slice(w), (s, s1, s))
+        self.assertEqual(ChunkFace.EAST.slice(w), (s, s, s0))
+        self.assertEqual(ChunkFace.WEST.slice(w), (s, s, s1))
+
+        w = 2
+        s0 = slice(- w, None)
+        s1 = slice(None, w)
+        self.assertEqual(ChunkFace.NORTH.slice(w), (s0, s, s))
+        self.assertEqual(ChunkFace.SOUTH.slice(w), (s1, s, s))
+        self.assertEqual(ChunkFace.TOP.slice(w), (s, s0, s))
+        self.assertEqual(ChunkFace.BOTTOM.slice(w), (s, s1, s))
+        self.assertEqual(ChunkFace.EAST.slice(w), (s, s, s0))
+        self.assertEqual(ChunkFace.WEST.slice(w), (s, s, s1))
+
+        other = 1
+        w = 1
+        s = slice(other, -other)
+        s0 = slice(- w, None)
+        s1 = slice(None, w)
+        self.assertEqual(ChunkFace.NORTH.slice(w, other=s), (s0, s, s))
+        self.assertEqual(ChunkFace.SOUTH.slice(w, other=s), (s1, s, s))
+        self.assertEqual(ChunkFace.TOP.slice(w, other=s), (s, s0, s))
+        self.assertEqual(ChunkFace.BOTTOM.slice(w, other=s), (s, s1, s))
+        self.assertEqual(ChunkFace.EAST.slice(w, other=s), (s, s, s0))
+        self.assertEqual(ChunkFace.WEST.slice(w, other=s), (s, s, s1))
