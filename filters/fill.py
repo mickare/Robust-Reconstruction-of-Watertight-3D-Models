@@ -203,7 +203,7 @@ class FloodFillOperator:
 
     def fill_at_pos(self, position: Vec3i, *args, **kwargs) -> ChunkGrid[bool]:
         image = ChunkGrid(self.mask.chunk_size, bool, False)
-        image.set_pos(position, True)
+        image.set_value(position, True)
         return self.fill(image, *args, **kwargs)
 
 

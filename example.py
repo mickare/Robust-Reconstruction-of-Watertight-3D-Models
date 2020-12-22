@@ -2,8 +2,8 @@ import numpy as np
 
 from data.chunks import ChunkGrid, Chunk
 from model.model_pts import PtsModelLoader
-from operators.dilate_operator import dilate
-from operators.fill_operator import flood_fill_at
+from filters.dilate import dilate
+from filters.fill import flood_fill_at
 from render_cloud import CloudRender
 from render_voxel import VoxelRender
 
@@ -27,14 +27,14 @@ if __name__ == '__main__':
     # dilated = dilate(grid == 1, steps=2)
     # grid[dilated] = 2
 
-    outer = next(grid.hull())
+    outer = next(grid.iter_hull())
     fill_position = outer.position_low
     # fill_position = (11, 48, 12)
     fill_mask = flood_fill_at(fill_position, mask=grid == 0)
     grid[fill_mask] = 3
 
     points = grid.copy(empty=True, dtype=bool)
-    points.set_pos(fill_position, True)
+    points.set_value(fill_position, True)
 
     ren = VoxelRender()
     fig = ren.make_figure()

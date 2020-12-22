@@ -1,8 +1,6 @@
 import time
 from contextlib import contextmanager
-from typing import Dict, Union, Tuple, Iterator, Optional
-
-import numpy as np
+from typing import Dict, Optional
 
 
 def __merge_default(target: Dict, default: Dict):
