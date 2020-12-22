@@ -175,7 +175,7 @@ class Chunk(Generic[V]):
 
     def set_array(self, value: np.ndarray) -> "Chunk[V]":
         assert self.shape == value.shape, f"{self.shape} != {value.shape}"
-        self._value = np.array(value, dtype=self._dtype)
+        self._value = np.asarray(value, dtype=self._dtype)
         self._is_filled = False
         return self
 
@@ -581,6 +581,9 @@ class ChunkGrid(Generic[V]):
                 self.set_pos(pos, value)
 
     def _set_positions(self, pos: np.ndarray, value: Union[V, Sequence]):
+        if isinstance(pos, list):
+            if not pos:
+                return  # No Op
         pos = np.asarray(pos, dtype=int)
         if pos.shape == (3,):
             self.set_pos(pos, value)
@@ -591,7 +594,8 @@ class ChunkGrid(Generic[V]):
                 for p, v in zip(pos, value):
                     self.set_pos(p, v)
             else:
-                for p in pos:
+                upos = np.unique(pos, axis=0)
+                for p in upos:
                     self.set_pos(p, value)
 
     def _set_chunks(self, other: "ChunkGrid", value: Union[V, np.ndarray, Chunk[V]]):
