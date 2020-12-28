@@ -130,7 +130,7 @@ def get_crust(chunk_size: int, max_steps: int, revert_steps: int, model: np.ndar
         color = 2
         color, components = fill(fill_position, fill_points, components, mask_empty, color)
 
-        plot(components, color, model, fill_points)
+        # plot(components, color, model, fill_points)
 
         count = color - 1
 
