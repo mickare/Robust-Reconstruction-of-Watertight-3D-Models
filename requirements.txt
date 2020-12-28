@@ -5,3 +5,4 @@ plotly
 tqdm
 PyWavefront
 sparse
+PyMaxflow
