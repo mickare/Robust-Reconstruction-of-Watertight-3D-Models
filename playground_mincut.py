@@ -178,7 +178,7 @@ with timed("\tTime: "):
     diff = diffuse(model, repeat=dilation_step)
 
 # =====================================================================
-# Distance Diffusion
+# MinCut
 # =====================================================================
 print("MinCut")
 
