@@ -13,7 +13,7 @@ from mathlib import Vec3i
 class FloodFillTask:
     __slots__ = ["index", "_face", "_image"]
 
-    def __init__(self, index: Index, face: ChunkFace = None, image: Optional[np.ndarray] = None):
+    def __init__(self, index: Index, face: Optional[ChunkFace] = None, image: Optional[np.ndarray] = None):
         assert len(index) == 3
         self.index = tuple(index)
         self._face = face
@@ -22,6 +22,10 @@ class FloodFillTask:
             assert isinstance(face, ChunkFace)
         if image is not None:
             assert isinstance(image, np.ndarray)
+
+    @property
+    def face(self) -> Optional[ChunkFace]:
+        return self._face
 
     def merge(self, other: "FloodFillTask", shape: Tuple[int, ...]):
         assert self.index == other.index
@@ -59,99 +63,103 @@ class FloodFillTask:
 
 class FloodFillOperator:
 
-    def __init__(self, mask: ChunkGrid[bool], verbose=False):
-        self.mask = mask.astype(bool)
+    def __init__(self, mask: ChunkGrid, verbose=False):
+        self.mask: ChunkGrid[np.bool8] = mask.astype(np.bool8).cleanup()
         self.verbose = verbose
 
-    def _compute_fill_task(self, task: FloodFillTask) -> Optional[Tuple[Chunk[bool], List[FloodFillTask]]]:
+    def _compute_fill_task(self, task: FloodFillTask) -> Optional[Tuple[Chunk[np.bool8], List[FloodFillTask]]]:
         """
         Create a fill mask for a chunk with a source mask
         :param task: fill task
         :return: A tuple of the resulting fill mask for this chunk and tasks for the neighboring chunks to fill
         """
-        chunk: Chunk[bool] = self.mask.chunks.get(task.index)
+        chunk: Chunk[np.bool8] = self.mask.chunks.get(task.index)
         if chunk is None:
             return None
-
-        image: np.ndarray = task.image(chunk.shape)
-
-        assert image.shape == chunk.shape
-        if not image.any():
-            return Chunk(task.index, chunk.size, dtype=bool).set_fill(False), []
 
         if chunk.is_filled():
             if chunk.value:
                 return (
-                    Chunk(task.index, chunk.size, dtype=bool).set_fill(True),
-                    [FloodFillTask(i, face=f.flip()) for f, i in ChunkGrid.iter_neighbors_indicies(chunk.index)]
+                    Chunk(task.index, chunk.size, dtype=np.bool8).set_fill(True),
+                    [
+                        FloodFillTask(i, face=f.flip())
+                        for f, i in ChunkGrid.iter_neighbors_indicies(chunk.index)
+                        if f != task.face
+                    ]
                 )
             else:
-                return Chunk(task.index, chunk.size, dtype=bool).set_fill(False), []
+                # return Chunk(task.index, chunk.size, dtype=np.bool8).set_fill(False), []
+                return None
+
+        task_image: np.ndarray = task.image(chunk.shape)
+        assert task_image.shape == chunk.shape
+        if not task_image.any():
+            # return Chunk(task.index, chunk.size, dtype=np.bool8).set_fill(False), []
+            return None
         else:
             mask = chunk.to_array()
             # Enforce that only "free" fields in dst_mask are filled
-            img = image & mask
-            result = ndimage.binary_propagation(img, mask=mask).astype(np.bool)
+            img = task_image & mask
+            result = ndimage.binary_propagation(img, mask=mask).astype(np.bool8)
 
+            # Create tasks where propagation is possible
             tasks = []
             for f, i in ChunkGrid.iter_neighbors_indicies(chunk.index):
                 face_slice = result[f.slice()]
                 if face_slice.all():
-                    tasks.append(FloodFillTask(i, face=f.flip()))
+                    if f != task.face:
+                        tasks.append(FloodFillTask(i, face=f.flip()))
                 elif face_slice.any():
-                    tmp = np.full(chunk.shape, False, dtype=np.bool)
+                    tmp = np.full(chunk.shape, False, dtype=np.bool8)
                     tmp[f.flip().slice()] = face_slice
                     tasks.append(FloodFillTask(i, image=tmp))
-            return Chunk(task.index, chunk.size, dtype=bool).set_array(result), tasks
+            return Chunk(task.index, chunk.size, dtype=np.bool8).set_array(result).cleanup(), tasks
 
-    def _fill_fast(self, image: ChunkGrid[bool], tasks: List[FloodFillTask]):
+    def _fill_fast(self, image: ChunkGrid[np.bool8], tasks: List[FloodFillTask]):
         queue = collections.deque(tasks)
         rest: List[FloodFillTask] = []
         visited: Set[Index] = set()
+        visited_full: Set[Index] = set()
+
+        def add(col: Set, value) -> bool:
+            n = len(col)
+            col.add(value)
+            return n != len(col)
+
         while queue:
             t = queue.popleft()
-            if t.index in visited:
+            if add(visited, t.index):
+                m: Chunk = self.mask.chunks.get(t.index, None)
+                if m is not None:
+                    if m.is_filled():
+                        if m.value:
+                            visited_full.add(t.index)
+                            o = image.ensure_chunk_at_index(t.index)
+                            o.set_fill(True)
+                            queue.extend([FloodFillTask(i, face=f.flip()) for f, i in
+                                          ChunkGrid.iter_neighbors_indicies(t.index)
+                                          if t.face != f
+                                          ])
+                    else:
+                        rest.append(t)
+            elif t.index not in visited_full:
                 rest.append(t)
-                continue
-            visited.add(t.index)
-
-            m: Chunk = self.mask.chunks.get(t.index, None)
-            if m is not None:
-                if m.is_filled():
-                    if m.value:
-                        o = image.ensure_chunk_at_index(t.index)
-                        o.set_fill(True)
-                        queue.extend([FloodFillTask(i, face=f.flip()) for f, i in
-                                      ChunkGrid.iter_neighbors_indicies(t.index)])
-
-                        # if o.is_filled():
-                        #     if not o.value:
-                        #         o.set_fill(True)
-                        #         queue.extend([FloodFillTask(i, face=f) for f, i in
-                        #                       self.mask.iter_neighbors_indicies(t.index)])
-                        # else:
-                        #     rest.append(t)
-                else:
-                    rest.append(t)
         return rest
 
-    @classmethod
-    def _merge_chunk_into(cls, src: Chunk[bool], dst: Chunk[bool]) -> bool:
-        old = np.copy(dst.value)
-        dst |= src
-        return np.any(old != dst.value)
+    def _iterate_fill(self, image: ChunkGrid[np.bool8], tasks: List[FloodFillTask], max_steps: int, **kwargs) \
+            -> ChunkGrid[np.bool8]:
 
-    def _iterate_fill(self, image: ChunkGrid[bool], tasks: List[FloodFillTask], max_steps: int, **kwargs) \
-            -> ChunkGrid[bool]:
+        def merge_chunk_into(src: Chunk[np.bool8], dst: Chunk[np.bool8]) -> bool:
+            old = np.copy(dst.value)
+            dst |= src
+            return np.any(old != dst.value)
+
         chunk_shape = self.mask.chunk_shape
         for step in range(1, max_steps + 1):
             if step == max_steps:
                 if self.verbose:
                     print("Maximum fill mask steps reached!", sys.stderr)
                 break
-
-            if self.verbose:
-                print(f"Fill step {step}/{max_steps}")
 
             # First do fast fill operations (e.g. empty chunk)
             tasks = self._fill_fast(image, tasks)
@@ -165,15 +173,15 @@ class FloodFillOperator:
 
             # Rebuild tasks for next iteration
             tasks = []
-
             for t in tasks_reduced:
                 res = self._compute_fill_task(t)
                 if res is not None:
-                    res_mask, res_tasks = res  # type: Chunk, List[FloodFillTask]
+                    res_mask, res_tasks = res  # type: Chunk[np.bool8], List[FloodFillTask]
                     index = res_mask.index
                     o = image.chunks.get(index)
                     if o is not None:
-                        changed = self._merge_chunk_into(res_mask, image.chunks[index])
+                        changed = merge_chunk_into(res_mask, o)
+                        o.cleanup()
                         if changed:
                             for t in res_tasks:
                                 if t.index in self.mask.chunks:
@@ -182,7 +190,7 @@ class FloodFillOperator:
                 break
         return image
 
-    def fill(self, image: ChunkGrid, max_steps: Optional[int] = None, **kwargs) -> ChunkGrid[bool]:
+    def fill(self, image: ChunkGrid[np.bool8], max_steps: Optional[int] = None, **kwargs) -> ChunkGrid[np.bool8]:
         assert image.chunk_size == self.mask.chunk_size
 
         if max_steps is None:
@@ -190,7 +198,7 @@ class FloodFillOperator:
         assert max_steps > 0
 
         # Prepare image
-        image = image.astype(bool)
+        image = image.astype(np.bool8)
         for i in self.mask.chunks.keys():
             image.ensure_chunk_at_index(i)
 
@@ -202,18 +210,18 @@ class FloodFillOperator:
         return self._iterate_fill(image, tasks, max_steps)
 
     def fill_at_pos(self, position: Vec3i, *args, **kwargs) -> ChunkGrid[bool]:
-        image = ChunkGrid(self.mask.chunk_size, bool, False)
+        image: ChunkGrid[np.bool8] = ChunkGrid(self.mask.chunk_size, dtype=np.bool8, fill_value=np.bool8(False))
         image.set_value(position, True)
         return self.fill(image, *args, **kwargs)
 
 
 def flood_fill(image: ChunkGrid, mask: ChunkGrid, max_steps: Optional[int] = None, verbose=False,
-               **kwargs) -> ChunkGrid[bool]:
+               **kwargs) -> ChunkGrid[np.bool8]:
     return FloodFillOperator(mask, verbose=verbose).fill(image, max_steps, **kwargs)
 
 
 def flood_fill_at(position: Vec3i, mask: ChunkGrid, max_steps: Optional[int] = None, verbose=False,
-                  **kwargs) -> ChunkGrid[bool]:
-    image = ChunkGrid(mask.chunk_size, bool, False)
+                  **kwargs) -> ChunkGrid[np.bool8]:
+    image = ChunkGrid(mask.chunk_size, np.bool8, False)
     image[position] = True
     return flood_fill(image, mask, max_steps, verbose=verbose, **kwargs)

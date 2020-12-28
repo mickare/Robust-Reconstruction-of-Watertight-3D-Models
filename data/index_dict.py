@@ -12,6 +12,8 @@ IndexUnion = Union[Index, Sequence[int], np.ndarray]
 
 
 class IndexDict(Generic[T]):
+    __slots__ = ('_data', '_minmax')
+
     def __init__(self) -> None:
         self._data: Dict[Index, T] = dict()
         self._minmax = MinMaxCheck()

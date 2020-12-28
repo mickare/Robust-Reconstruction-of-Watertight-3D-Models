@@ -8,33 +8,28 @@ from data.chunks import ChunkGrid, Chunk, ChunkIndex, ChunkFace
 from mathlib import Vec3i
 
 
-def dilate(image: ChunkGrid[bool], mask: ChunkGrid[bool] = None, steps=1) -> ChunkGrid[bool]:
-    if mask is None:
-        mask = ChunkGrid(image.chunk_size, dtype=bool, fill_value=True)
-    else:
-        mask = mask.astype(bool)
+def dilate_no_mask(image: ChunkGrid[bool], structure: Optional[np.ndarray] = None, steps=1) -> ChunkGrid[bool]:
+    if structure is not None:
+        assert structure.ndim == 2 and structure.shape == (3, 3)
 
-    result = image.copy()
+    result = image
     for step in range(steps):
+        # Temporary result between each step
+        tmp = result.copy(empty=True)
         # Dilate inner chunk
         for r in result.chunks:
-            tmp = ndimage.binary_dilation(
-                r.to_array(),
-                mask=mask.ensure_chunk_at_index(r.index, insert=False).to_array()
-            )
-            r.set_array(tmp)
-
-        # Dilate chunk overflow
-        for index in list(result.chunks.keys()):
-            for f, n in result.iter_neighbors_indicies(index):
-                # Only insert if it is filled by overflow
-                r_n = result.ensure_chunk_at_index(n, insert=False)
-                m = mask.ensure_chunk_at_index(index, insert=False).to_array()
-                img = image.ensure_chunk_at_index(index, insert=False).to_array()
-                s0 = f.slice()
-                s1 = f.flip().slice()
-                r_n[s1] |= m[s0] & img[s0]
-                r_n.cleanup_memory()
-                if r_n.any():
-                    result.chunks.insert(n, r_n)
+            dil = ndimage.binary_dilation(r.padding(result, 1), structure=structure)
+            c = tmp.ensure_chunk_at_index(r.index)
+            c.set_array(dil[1:-1, 1:-1, 1:-1])
+        # Set result
+        result = tmp
+    result.cleanup()
     return result
+
+
+def dilate(image: ChunkGrid[bool], structure: Optional[np.ndarray] = None, mask: ChunkGrid[bool] = None, steps=1) \
+        -> ChunkGrid[bool]:
+    if mask is None:
+        return dilate_no_mask(image, structure, steps)
+    else:
+        raise NotImplementedError

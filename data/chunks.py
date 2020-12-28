@@ -1,5 +1,4 @@
 import enum
-import functools
 import itertools
 import operator
 from typing import Union, Tuple, Iterator, Optional, Generic, TypeVar, Callable, Type, Sequence, Set
@@ -52,6 +51,13 @@ class ChunkFace(enum.IntEnum):
                 (size, size, 1),
                 (size, size, 1))[self]
 
+    def orthogonal(self) -> Sequence["ChunkFace"]:
+        return (
+            (ChunkFace.TOP, ChunkFace.BOTTOM, ChunkFace.EAST, ChunkFace.WEST),
+            (ChunkFace.NORTH, ChunkFace.SOUTH, ChunkFace.EAST, ChunkFace.WEST),
+            (ChunkFace.NORTH, ChunkFace.SOUTH, ChunkFace.TOP, ChunkFace.BOTTOM)
+        )[self // 2]
+
     def __bool__(self):
         return True
 
@@ -94,6 +100,8 @@ class ChunkHelper:
 
 
 class Chunk(Generic[V]):
+    __slots__ = ('_index', '_size', '_dtype', '_fill_value', '_is_filled', '_value')
+
     def __init__(self, index: Vec3i, size: int, dtype: Optional[Type[V]] = None, fill_value: Optional[V] = None):
         self._index: Vec3i = np.asarray(index, dtype=np.int)
         self._size = size
@@ -143,6 +151,7 @@ class Chunk(Generic[V]):
         return self.to_array()[tuple(self.inner(pos))]
 
     def set_pos(self, pos: Vec3i, value: V):
+        value = value if self._dtype is None else self._dtype(value)
         inner = self.inner(pos)
         arr = self.to_array()
         arr[tuple(inner)] = value
@@ -155,13 +164,15 @@ class Chunk(Generic[V]):
             self.set_pos(pos, value)
 
     def set_fill(self, value: V) -> "Chunk[V]":
+        value = value if self._dtype is None else self._dtype(value)
         self._value = value
         self._is_filled = True
         return self
 
     def set_array(self, value: np.ndarray) -> "Chunk[V]":
+        value = np.asarray(value, dtype=self._dtype)
         assert self.shape == value.shape, f"{self.shape} != {value.shape}"
-        self._value = np.asarray(value, dtype=self._dtype)
+        self._value = value
         self._is_filled = False
         return self
 
@@ -171,7 +182,7 @@ class Chunk(Generic[V]):
         else:
             return self._value
 
-    def where(self, other: "Chunk[bool]", fill_value: Optional[V] = None) -> "Chunk[V]":
+    def filter(self, other: "Chunk[bool]", fill_value: Optional[V] = None) -> "Chunk[V]":
         other: Chunk[bool] = other.astype(bool)
         c = self.copy(empty=True, fill_value=fill_value)
         if other.is_filled() and other._value:
@@ -182,25 +193,60 @@ class Chunk(Generic[V]):
             c.set_array(arr)
         return c
 
+    def items(self, mask: Optional["Chunk[bool]"] = None) -> Iterator[Tuple[Vec3i, V]]:
+        it = PositionIter(None, None, None, np.zeros(3), self.shape)
+        if mask is None:
+            ps = np.asarray(list(it))
+        elif isinstance(mask, Chunk):
+            m = mask.to_array()
+            ps = np.array([p for p in it if m[p]])
+        else:
+            raise ValueError(f"invalid mask of type {type(mask)}")
+        if len(ps) > 0:
+            cps = ps + self.position_low
+            if self.is_filled():
+                yield from ((p, self._value) for p in cps)
+            else:
+                yield from zip(cps, self.to_array()[tuple(ps.T)])
+
+    def where(self, mask: Optional["Chunk[bool]"] = None) -> np.ndarray:
+        it = PositionIter(None, None, None, np.zeros(3), self.shape)
+        if mask is None:
+            if self.is_filled():
+                if self._value:
+                    return np.asarray(list(it)) + self.position_low
+            else:
+                return np.argwhere(self.to_array().astype(bool)) + self.position_low
+        elif isinstance(mask, Chunk):
+            if mask.is_filled() and bool(mask.value):
+                return self.where(mask=None)
+            else:
+                m = mask.to_array()
+                return np.array([p for p in it if m[p]]) + self.position_low
+        else:
+            raise ValueError(f"invalid mask of type {type(mask)}")
+        return np.empty((0, 3), dtype=int)
+
     def __getitem__(self, item):
         if isinstance(item, Chunk):
-            return self.where(item)
+            return self.filter(item)
         return self.to_array()[item]
 
     def __setitem__(self, key: Union[np.ndarray, "Chunk"], value: Union[V, np.ndarray, "Chunk"]):
         if isinstance(key, Chunk):
-            key = key.astype(bool).to_array()
+            key = key.to_array().astype(np.bool8)
         if isinstance(value, Chunk):
             value = value.to_array()
         arr = self.to_array()
         arr[key] = value
         self.set_array(arr)
-        self.cleanup_memory()
 
     def copy(self, empty=False, dtype=None, fill_value: Optional[V] = None):
         dtype = dtype or self._dtype
         fill_value = self._fill_value if fill_value is None else fill_value
-        c = Chunk(self._index, self._size, dtype=dtype, fill_value=dtype(fill_value))
+        if dtype is not None:
+            fill_value = dtype(fill_value)
+        c = Chunk(self._index, self._size, dtype=dtype, fill_value=fill_value)
         if not empty:
             if self.is_filled():
                 c.set_fill(self._value)
@@ -259,28 +305,31 @@ class Chunk(Generic[V]):
         raise ValueError(f"The truth value of {__class__} is ambiguous. "
                          "Use a.any(), or a.all(), or wrap the comparison (0 < a) & (a < 0)")
 
-    def cleanup_memory(self):
+    def cleanup(self):
         """Try to reduce memory footprint"""
         if self.is_array():
-            if self._dtype == bool:
-                if np.all(self._value):
-                    self.set_fill(True)
-                elif not np.any(self._value):
-                    self.set_fill(False)
-            else:
-                u = np.unique(self._value)
-                if len(u) == 1:
-                    self.set_fill(u.item())
+            u = np.unique(self._value)
+            if len(u) == 1:
+                self.set_fill(u.item())
         return self
 
     def all(self) -> bool:
+        if self.is_filled():
+            return bool(self._value)
         return np.all(self._value)
 
     def any(self) -> bool:
+        if self.is_filled():
+            return bool(self._value)
         return np.any(self._value)
 
+    def any_fast(self) -> bool:
+        if self.is_filled():
+            return bool(self._value)
+        return True
+
     def padding(self, grid: "ChunkGrid[V]", padding: int, corners=False, value: Optional[V] = None) -> np.ndarray:
-        assert padding >= 0
+        assert 0 <= padding <= self._size
         if padding == 0:
             return self.to_array()
         if value is None:
@@ -303,7 +352,15 @@ class Chunk(Generic[V]):
         dtype = dtype or self.dtype
         # Inplace selection
         c = self if inplace else self.copy()
-        c._value = func(self._value)
+        res = func(self._value)
+        if not c._is_filled:
+            assert isinstance(res, np.ndarray)
+            if dtype is not None:
+                res = res.astype(dtype)
+        elif dtype is not None:
+            assert isinstance(res, dtype)
+        c._value = res
+
         if dtype is not None:
             c._dtype = dtype
             c._fill_value = dtype(self._fill_value)
@@ -317,13 +374,18 @@ class Chunk(Generic[V]):
 
         if isinstance(rhs, Chunk):
             c._is_filled = c._is_filled & rhs._is_filled
-            c._value = func(c._value, rhs._value)
+            res = func(c._value, rhs._value)
         else:
             c._is_filled = c._is_filled
-            c._value = func(c._value, rhs)
+            res = func(c._value, rhs)
 
-        # Update dtype and if possible the default fill value
-        # noinspection DuplicatedCode
+        if not c._is_filled:
+            assert isinstance(res, np.ndarray)
+            if dtype is not None:
+                res = res.astype(dtype)
+        elif dtype is not None:
+            res = dtype(res)
+
         if dtype is not None:
             c._dtype = dtype
             try:
@@ -336,28 +398,29 @@ class Chunk(Generic[V]):
                     c._fill_value = dtype(self._fill_value)
                 except Exception:
                     pass
-        c.cleanup_memory()
+
+        c._value = res
         return c
 
     # Comparison Operator
 
-    def __eq__(self, rhs) -> "Chunk[bool]":
-        return self.join(rhs, func=operator.eq, dtype=bool)
+    def __eq__(self, rhs) -> "Chunk[np.bool8]":
+        return self.join(rhs, func=operator.eq, dtype=np.bool8).cleanup()
 
-    def __ne__(self, rhs) -> "Chunk[bool]":
-        return self.join(rhs, func=operator.ne, dtype=bool)
+    def __ne__(self, rhs) -> "Chunk[np.bool8]":
+        return self.join(rhs, func=operator.ne, dtype=np.bool8).cleanup()
 
-    def __lt__(self, rhs) -> "Chunk[bool]":
-        return self.join(rhs, func=operator.lt, dtype=bool)
+    def __lt__(self, rhs) -> "Chunk[np.bool8]":
+        return self.join(rhs, func=operator.lt, dtype=np.bool8).cleanup()
 
-    def __le__(self, rhs) -> "Chunk[bool]":
-        return self.join(rhs, func=operator.le, dtype=bool)
+    def __le__(self, rhs) -> "Chunk[np.bool8]":
+        return self.join(rhs, func=operator.le, dtype=np.bool8).cleanup()
 
-    def __gt__(self, rhs) -> "Chunk[bool]":
-        return self.join(rhs, func=operator.gt, dtype=bool)
+    def __gt__(self, rhs) -> "Chunk[np.bool8]":
+        return self.join(rhs, func=operator.gt, dtype=np.bool8).cleanup()
 
-    def __ge__(self, rhs) -> "Chunk[bool]":
-        return self.join(rhs, func=operator.ge, dtype=bool)
+    def __ge__(self, rhs) -> "Chunk[np.bool8]":
+        return self.join(rhs, func=operator.ge, dtype=np.bool8).cleanup()
 
     eq = __eq__
     ne = __ne__
@@ -465,9 +528,18 @@ class Chunk(Generic[V]):
     __rxor__ = __xor__
     __ror__ = __or__
 
+    def sum(self, dtype: Optional[Type[M]] = None) -> M:
+        if self._is_filled:
+            val = self._value * self._size ** 3
+            return val if dtype is None else dtype(val)
+        else:
+            return np.sum(self._value, dtype=dtype)
+
 
 class ChunkGrid(Generic[V]):
-    def __init__(self, chunk_size: int = 8, dtype=None, fill_value: Optional[V] = None):
+    __slots__ = ('_chunk_size', '_dtype', '_fill_value', 'chunks')
+
+    def __init__(self, chunk_size: int, dtype: Optional[Type[V]] = None, fill_value: Optional[V] = None):
         assert chunk_size > 0
         self._chunk_size = chunk_size
         self._dtype = np.dtype(dtype).type
@@ -513,10 +585,12 @@ class ChunkGrid(Generic[V]):
     def copy(self, empty=False, dtype: Optional[Type[M]] = None, fill_value: Optional[M] = None) -> "ChunkGrid[M]":
         dtype = dtype or self._dtype
         fill_value = self._fill_value if fill_value is None else fill_value
-        new = ChunkGrid(self._chunk_size, dtype, dtype(fill_value))
+        if dtype is not None:
+            fill_value = dtype(fill_value)
+        new = ChunkGrid(self._chunk_size, dtype, fill_value)
         if not empty:
             for src in self.chunks.values():
-                new.chunks.insert(src.index, src.copy())
+                new.chunks.insert(src.index, src.copy(dtype=dtype, fill_value=fill_value))
         return new
 
     def split(self, splits: int, chunk_size: Optional[int] = None) -> "ChunkGrid[V]":
@@ -574,7 +648,7 @@ class ChunkGrid(Generic[V]):
                   z: Union[int, slice, None] = None) -> Tuple[sparse.SparseArray, Vec3i]:
         """Convert this grid to a sparse matrix and a offset vector to the zero index"""
         if len(self.chunks) == 0:
-            return sparse.zeros(0), np.zeros(3)
+            return sparse.zeros((0, 0)), np.zeros(3)
 
         # Variable cache
         cs = self._chunk_size
@@ -588,17 +662,17 @@ class ChunkGrid(Generic[V]):
         chunk_max = it.stop // cs
         chunk_len = chunk_max - chunk_min
 
-        arr = sparse.DOK(tuple(chunk_len * cs), fill_value=self._fill_value, dtype=self.dtype)
+        dok = sparse.DOK(tuple(chunk_len * cs), dtype=self.dtype, fill_value=self.fill_value)
         for c in self.chunks.values():
             if np.all(chunk_min <= c.index) and np.all(c.index <= chunk_max):
                 u, v, w = (c.index - chunk_min) * cs
-                arr[u:u + cs, v:v + cs, w:w + cs] = c.to_array()
+                dok[u:u + cs, v:v + cs, w:w + cs] = c.to_array()
 
         start = it.start - chunk_min * cs
         stop = it.stop - chunk_min * cs
         step = it.step
         return (
-            arr.to_coo()[start[0]:stop[0]:step[0], start[1]:stop[1]:step[1], start[2]:stop[2]:step[2]],
+            dok.to_coo()[start[0]:stop[0]:step[0], start[1]:stop[1]:step[1], start[2]:stop[2]:step[2]],
             chunk_min * cs
         )
 
@@ -607,13 +681,33 @@ class ChunkGrid(Generic[V]):
         res, offset = self.to_sparse(*args, **kwargs)
         return res.todense()
 
-    def where(self, other: "ChunkGrid[bool]", fill_value: Optional[V] = None) -> "ChunkGrid[V]":
+    def items(self, mask: Optional["ChunkGrid[bool]"] = None) -> Iterator[Tuple[Vec3i, V]]:
+        if mask is None:
+            for i, c in self.chunks.items():
+                yield from c.items()
+        else:
+            for i, c in self.chunks.items():
+                m = mask.ensure_chunk_at_index(i, insert=False)
+                if m.any_fast():
+                    yield from c.items(mask=m)
+
+    def where(self, mask: Optional["ChunkGrid[bool]"] = None) -> Iterator[Vec3i]:
+        if mask is None:
+            for i, c in self.chunks.items():
+                yield from c.where()
+        else:
+            for i, c in self.chunks.items():
+                m = mask.ensure_chunk_at_index(i, insert=False)
+                if m.any_fast():
+                    yield from c.where(mask=m)
+
+    def filter(self, other: "ChunkGrid[bool]", fill_value: Optional[V] = None) -> "ChunkGrid[V]":
         """Apply a filter mask to this grid and return the masked values"""
         result = self.copy(empty=True, fill_value=fill_value)
         for i, o in other.chunks.items():
             c = self.chunks.get(i, None)
             if c is not None and c.any():
-                result.chunks.insert(i, c.where(o, fill_value=fill_value))
+                result.chunks.insert(i, c.filter(o, fill_value=fill_value))
 
     def __getitem__(self, item):
         if isinstance(item, slice):
@@ -621,7 +715,7 @@ class ChunkGrid(Generic[V]):
         elif isinstance(item, tuple) and len(item) <= 3:
             return self.to_sparse(*item)
         elif isinstance(item, ChunkGrid):
-            return self.where(item)
+            return self.filter(item)
         elif isinstance(item, np.ndarray):
             return self.get_values(item)
         else:
@@ -711,6 +805,15 @@ class ChunkGrid(Generic[V]):
             self._set_chunks(key, value)
         else:
             raise IndexError("Invalid get")
+
+    def cleanup(self, remove=False):
+        for chunk in self.chunks:
+            chunk.cleanup()
+        if remove:
+            for chunk in list(self.chunks):
+                if not chunk.any():
+                    del self.chunks[chunk.index]
+        return self
 
     def pad_chunks(self, width: int = 1):
         visited: Set[ChunkIndex] = set()
@@ -804,23 +907,23 @@ class ChunkGrid(Generic[V]):
 
     # Comparison Operator
 
-    def __eq__(self, rhs) -> "ChunkGrid[bool]":
-        return self.outer_join(rhs, func=operator.eq, dtype=bool)
+    def __eq__(self, rhs) -> "ChunkGrid[np.bool8]":
+        return self.outer_join(rhs, func=operator.eq, dtype=np.bool8)
 
-    def __ne__(self, rhs) -> "ChunkGrid[bool]":
-        return self.outer_join(rhs, func=operator.ne, dtype=bool)
+    def __ne__(self, rhs) -> "ChunkGrid[np.bool8]":
+        return self.outer_join(rhs, func=operator.ne, dtype=np.bool8)
 
-    def __lt__(self, rhs) -> "ChunkGrid[bool]":
-        return self.outer_join(rhs, func=operator.lt, dtype=bool)
+    def __lt__(self, rhs) -> "ChunkGrid[np.bool8]":
+        return self.outer_join(rhs, func=operator.lt, dtype=np.bool8)
 
-    def __le__(self, rhs) -> "ChunkGrid[bool]":
-        return self.outer_join(rhs, func=operator.le, dtype=bool)
+    def __le__(self, rhs) -> "ChunkGrid[np.bool8]":
+        return self.outer_join(rhs, func=operator.le, dtype=np.bool8)
 
-    def __gt__(self, rhs) -> "ChunkGrid[bool]":
-        return self.outer_join(rhs, func=operator.gt, dtype=bool)
+    def __gt__(self, rhs) -> "ChunkGrid[np.bool8]":
+        return self.outer_join(rhs, func=operator.gt, dtype=np.bool8)
 
-    def __ge__(self, rhs) -> "ChunkGrid[bool]":
-        return self.outer_join(rhs, func=operator.ge, dtype=bool)
+    def __ge__(self, rhs) -> "ChunkGrid[np.bool8]":
+        return self.outer_join(rhs, func=operator.ge, dtype=np.bool8)
 
     eq = __eq__
     ne = __ne__
@@ -931,3 +1034,6 @@ class ChunkGrid(Generic[V]):
     __rand__ = __and__
     __rxor__ = __xor__
     __ror__ = __or__
+
+    def sum(self, dtype: Optional[Type[M]] = None) -> M:
+        return sum(c.sum() for c in self.chunks)
