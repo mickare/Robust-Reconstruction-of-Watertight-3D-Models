@@ -7,7 +7,7 @@ import numpy as np
 from data.chunks import ChunkGrid, ChunkFace
 
 
-class TestChunkSetter(unittest.TestCase):
+class TestChunkGridSetter(unittest.TestCase):
     def test_set_pos(self):
         a = ChunkGrid(2, bool, False)
         a.set_value((0, 0, 0), True)
@@ -22,10 +22,10 @@ class TestChunkSetter(unittest.TestCase):
         expected[2, 2, 2] = True
 
         assert result.shape == expected.shape
-        self.assertTrue(np.all(result == expected), f"Not equal: {result}\n-------\n{expected}")
+        self.assertEqual(str(expected), str(result))
 
 
-class TestChunkOperator(unittest.TestCase):
+class TestChunkGridOperator(unittest.TestCase):
 
     def test_eq_1(self):
         a = ChunkGrid(2, bool, False)
@@ -38,7 +38,7 @@ class TestChunkOperator(unittest.TestCase):
         expected[0, 0, 0] = False
 
         assert result.shape == expected.shape
-        self.assertTrue(np.all(result == expected), f"Failure! \n{result}\n-------\n{expected}")
+        self.assertEqual(str(expected), str(result))
 
     def test_eq_2(self):
         a = ChunkGrid(2, bool, False)
@@ -49,13 +49,22 @@ class TestChunkOperator(unittest.TestCase):
 
         result = (a == b).to_dense()
         self.assertIsInstance((a == b), ChunkGrid)
+        self.assertIs((a == b).dtype, np.bool8)
 
         expected = np.ones((4, 4, 4), dtype=bool)
         expected[0, 0, 0] = False
         expected[2, 2, 2] = False
 
         assert result.shape == expected.shape
-        self.assertTrue(np.all(result == expected), f"Failure! \n{result}\n-------\n{expected}")
+        self.assertEqual(str(expected), str(result))
+
+    def test_eq_3(self):
+        a = ChunkGrid(1, bool, False)
+        b = ChunkGrid(1, bool, False)
+
+        x = a == b
+        self.assertEqual(0, len(x.chunks))
+        self.assertTrue(x.fill_value)
 
     def _test_operator1_bool(self, op):
         a = ChunkGrid(2, bool, False)
@@ -295,3 +304,35 @@ class TestChunkOperator(unittest.TestCase):
         expected[0, 0, 0] = True
 
         self.assertEqual(str(expected), str(actual))
+
+    def test_eq_and_combined(self):
+        a = ChunkGrid(2, bool, False)
+        a.set_value((0, 0, 0), True)
+        a.set_value((0, 0, 1), True)
+        a.set_value((0, 1, 1), True)
+
+        b = ChunkGrid(2, int, 0)
+        b.set_value((0, 0, 1), 1)
+        b.set_value((0, 1, 1), 2)
+        b.set_value((1, 1, 1), 1)
+
+        tmp = (b == 1)
+        result = tmp & a
+
+        expected_tmp = np.zeros((2, 2, 2), dtype=bool)
+        expected_tmp[0, 0, 1] = True
+        expected_tmp[1, 1, 1] = True
+
+        self.assertEqual(str(expected_tmp), str(tmp.to_dense()))
+
+        expected = np.zeros((2, 2, 2), dtype=bool)
+        expected[0, 0, 1] = True
+        self.assertEqual(str(expected), str(result.to_dense()))
+
+        values = list(tmp.items(mask=a))
+        self.assertEqual(3, len(values))
+        self.assertEqual(str([
+            (np.array([0, 0, 0]), False),
+            (np.array([0, 0, 1]), True),
+            (np.array([0, 1, 1]), False)
+        ]), str(values))
