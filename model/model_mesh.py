@@ -6,7 +6,7 @@ import numpy as np
 import pywavefront
 
 from mathlib import Vec3f
-from model.model import ModelLoader
+from model.loader import ModelLoader
 
 
 @dataclass

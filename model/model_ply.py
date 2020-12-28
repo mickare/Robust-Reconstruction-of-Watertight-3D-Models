@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 import tqdm
 
 from mathlib import quaternion_rotation_matrix
-from model.model import ModelLoader
+from model.loader import ModelLoader
 
 
 class Transform:
