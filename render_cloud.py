@@ -28,13 +28,13 @@ class CloudRender:
             """
 
     def _unwrap(self, pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        x, y, z = pts.T
+        x, y, z = np.transpose(pts)
         if self.flip_zy:
             return x, z, y
         return x, y, z
 
-    def make_scatter(self, pts: np.ndarray, **kwargs):
-        merge_default(kwargs, mode='markers', hovertemplate=self._hovertemplate())
+    def make_scatter(self, pts: np.ndarray, size=0.5, **kwargs):
+        merge_default(kwargs, mode='markers', marker=dict(size=size), hovertemplate=self._hovertemplate())
         x, y, z = self._unwrap(pts)
         return go.Scatter3d(x=x, y=y, z=z, **kwargs)
 
@@ -69,13 +69,14 @@ class CloudRender:
         points: List[np.ndarray] = []
         values: List[np.ndarray] = []
         for m in mask.chunks:  # type: Chunk
-            c: Chunk = grid.chunks.get(m.index, None)
-            if c.is_array() and c.any():
-                p = np.argwhere(m.to_array())
-                v = c.to_array()[tuple(p.T)]
-                assert len(p) == len(v)
-                points.append(p + c.position_low + 0.5)
-                values.append(v)
+            if m.any():
+                c: Chunk = grid.ensure_chunk_at_index(m.index, insert=False)
+                if c.any():
+                    p = np.argwhere(m.to_array())
+                    v = c.to_array()[tuple(p.T)]
+                    assert len(p) == len(v)
+                    points.append(p + c.position_low + 0.5)
+                    values.append(v)
 
         pts = np.concatenate(points)
         val = np.concatenate(values)
