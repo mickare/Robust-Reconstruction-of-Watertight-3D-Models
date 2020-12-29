@@ -15,11 +15,11 @@ def immutable(arr: np.ndarray):
 
 
 class MeshHelper:
-    _faces_front = immutable(np.array([(0, 1, 2), (3, 2, 1)], dtype=np.uint32))
-    _faces_back = immutable(np.array([(3, 2, 1), (0, 1, 2)], dtype=np.uint32))
     _vert_x = immutable(np.array([(0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1)], dtype=np.int32))
     _vert_y = immutable(np.array([(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)], dtype=np.int32))
     _vert_z = immutable(np.array([(0, 0, 0), (0, 1, 0), (1, 0, 0), (1, 1, 0)], dtype=np.int32))
+    _faces_front = immutable(np.array([(0, 1, 2), (3, 2, 1)], dtype=np.uint32))
+    _faces_back = immutable(np.array([(3, 2, 1), (0, 1, 2)], dtype=np.uint32))
 
     @classmethod
     def _empty(cls) -> Tuple[np.ndarray, np.ndarray]:
@@ -158,39 +158,20 @@ class MeshHelper:
 
 class VoxelRender:
 
-    def __init__(self, flip_zy=True):
-        self.flip_zy = flip_zy
+    def __init__(self):
         self.default_mesh_kwargs = dict(
             lighting=dict(
-                ambient=0.4,
-                diffuse=0.5,
-                facenormalsepsilon=0.0000000000001,
-                fresnel=0.001,
-                roughness=0.9,
+                ambient=0.18,
+                diffuse=1,
+                fresnel=0.1,
                 specular=0.1,
+                roughness=0.05,
+                facenormalsepsilon=1e-15,
+                vertexnormalsepsilon=1e-15
             ),
+            lightposition=dict(x=-1000, y=0, z=300),
             flatshading=True,
         )
-
-    def _hovertemplate(self):
-        if self.flip_zy:
-            return """
-<b>x:</b> %{x}<br>
-<b>y:</b> %{z}<br>
-<b>z:</b> %{y}<br>
-"""
-        else:
-            return """
-<b>x:</b> %{x}<br>
-<b>y:</b> %{y}<br>
-<b>z:</b> %{z}<br>
-"""
-
-    def _unwrap(self, pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        x, y, z = pts.T
-        if self.flip_zy:
-            return x, z, y
-        return x, y, z
 
     def dense_voxel(self, dense: np.ndarray, **kwargs):
         vertices, faces = MeshHelper.extract_voxel_mesh(dense)
@@ -202,44 +183,38 @@ class VoxelRender:
 
     def make_mesh(self, vertices: np.ndarray, faces: np.ndarray,
                   scale=1.0, offset: Optional[Vec3f] = None, **kwargs):
-        merge_default(kwargs, **self.default_mesh_kwargs,
-                      hovertemplate=self._hovertemplate())
+        merge_default(kwargs, **self.default_mesh_kwargs)
         kwargs.setdefault("flatshading", True)
-        kwargs.setdefault("lighting", dict(
-        ))
 
         offset = (0, 0, 0) if offset is None else offset
 
         vertices = scale * vertices + offset
         x, y, z = self._unwrap(vertices)
-        i, j, k = faces.T
+        i, j, k = self._unwrap(faces)
         return go.Mesh3d(x=x, y=y, z=z, i=i, j=j, k=k, **kwargs)
 
+    @classmethod
+    def _unwrap(cls, data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if len(data) == 0:
+            return np.empty(0), np.empty(0), np.empty(0)
+        x, y, z = np.transpose(data)
+        return x, y, z
+
     def make_figure(self, **kwargs) -> go.Figure:
-        fig = go.Figure()
+        fig = go.Figure(**kwargs)
         camera = dict(
             up=dict(x=0, y=1, z=0),
-            eye=dict(x=-1, y=-1, z=0.5)
+            eye=dict(x=-1.5, y=0.7, z=1.4)
         )
-        yaxis = dict()
-        zaxis = dict()
-        if self.flip_zy:
-            yaxis.setdefault("autorange", "reversed")
         fig.update_layout(
             yaxis=dict(scaleanchor="x", scaleratio=1),
             scene=dict(
                 aspectmode='data',
-                yaxis=yaxis,
-                zaxis=zaxis,
-                xaxis_title='X',
-                yaxis_title='Y' if not self.flip_zy else 'Z',
-                zaxis_title='Z' if not self.flip_zy else 'Y',
                 camera=camera,
-                dragmode='turntable'
+                dragmode='orbit'
             ),
             scene_camera=camera
         )
-        fig.update_traces(lightposition=dict(X=1000, Y=1000, Z=1000))
         return fig
 
     def plot(self, *args: ChunkGrid, **kwargs):
