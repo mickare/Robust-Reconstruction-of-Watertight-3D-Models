@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple, Dict, List, Set
 
 import numpy as np
 import tqdm
@@ -17,6 +17,7 @@ from utils import timed
 import maxflow
 
 CHUNKSIZE = 8
+RESOLUTION = 64
 
 # =====================================================================
 # Model Loading
@@ -35,11 +36,10 @@ def scale_model(model: np.ndarray, resolution=64) -> Tuple[np.ndarray, Vec3f, fl
     return scaled, model_min, scale_factor
 
 
-resolution = 64
 
 with timed("\tTime: "):
     data = FixedPtsModels.bunny()
-    data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
+    data_pts, data_offset, data_scale = scale_model(data, resolution=RESOLUTION)
     model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
     model[data_pts] = True
     model.pad_chunks(2)
@@ -91,9 +91,10 @@ def points_on_chunk_hull(grid: ChunkGrid[np.bool8], count: int = 1) -> Optional[
 def plot_voxels(grid: ChunkGrid[np.bool8], components: ChunkGrid[int]):
     ren = VoxelRender()
     fig = ren.make_figure()
-    fig.add_trace(ren.grid_voxel(grid, opacity=1.0, name=f"Something"))
-    fig.add_trace(ren.grid_voxel(components == 1, opacity=0.2, name=f"Crust"))
-    fig.add_trace(ren.grid_voxel(components == 2, opacity=0.1, name=f"Hull 2"))
+    fig.add_trace(ren.grid_voxel(grid, opacity=1.0, name=f"Missing"))
+    # fig.add_trace(ren.grid_voxel(components == 1, opacity=0.2, name=f"Crust"))
+    fig.add_trace(ren.grid_voxel(components == 2, opacity=0.1, name=f"Hull"))
+    fig.add_trace(ren.grid_voxel(components > 2, opacity=1.0, name=f"More"))
     fig.update_layout(showlegend=True)
     fig.show()
 
@@ -127,7 +128,7 @@ with timed("\tTime: "):
             # Update for next iteration
             target_fill = find_empty_fill_position(components == 0)
 
-        # plot_voxels(components == 0, components)
+        plot_voxels(components == 0, components)
 
         if last_count >= count and count <= 3:
             break
@@ -141,9 +142,16 @@ crust.cleanup()
 components.cleanup()
 
 crust_outer = dilate(components == 2) & crust
-crust_inner = dilate(components == 3) & crust
+crust_inner = dilate((components != 1) & (components != 2)) & crust
 
 print("\tSteps: ", dilation_step)
+
+ren = VoxelRender()
+fig = ren.make_figure()
+fig.add_trace(ren.grid_voxel(crust_outer, opacity=0.2, name='Outer'))
+fig.add_trace(ren.grid_voxel(crust_inner, opacity=0.2, name='Inner'))
+fig.add_trace(CloudRender().make_scatter(data_pts, name='Model'))
+fig.show()
 
 # =====================================================================
 # Distance Diffusion
@@ -170,12 +178,12 @@ def diffuse(model: ChunkGrid[bool], repeat=1):
             tmp.ensure_chunk_at_index(chunk.index).set_array(conv)
         result = tmp
 
-    result.cleanup()
+    result.cleanup(remove=True)
     return result
 
 
 with timed("\tTime: "):
-    diff = diffuse(model, repeat=dilation_step)
+    diff = diffuse(model, repeat=min(3, dilation_step))
 
 # =====================================================================
 # MinCut
@@ -205,6 +213,7 @@ nodes_count = len(nodes)
 graph = maxflow.Graph[float](nodes_count, nodes_count)
 g_nodes = graph.add_nodes(len(nodes))
 
+visited: Set[Tuple[Tuple[Vec3i, ChunkFace], Tuple[Vec3i, ChunkFace]]] = set()
 for vPos, w in tqdm.tqdm(voxels.items(), total=len(voxels), desc="Linking Faces"):
     for f in ChunkFace:  # type: ChunkFace
         fNode = get_node(vPos, f)
@@ -212,7 +221,10 @@ for vPos, w in tqdm.tqdm(voxels.items(), total=len(voxels), desc="Linking Faces"
         for o in f.orthogonal():
             oNode = get_node(vPos, o)
             oIndex = nodes_index[oNode]
-            graph.add_edge(fIndex, oIndex, w, w)
+            lenVis = len(visited)
+            visited.add((fIndex, oIndex))
+            if len(visited) != lenVis:
+                graph.add_edge(fIndex, oIndex, w, w)
 
 # Source
 for vPos in tqdm.tqdm(list(crust_outer.where()), desc="Linking Source"):
