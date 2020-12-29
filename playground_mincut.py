@@ -36,7 +36,6 @@ def scale_model(model: np.ndarray, resolution=64) -> Tuple[np.ndarray, Vec3f, fl
     return scaled, model_min, scale_factor
 
 
-
 with timed("\tTime: "):
     data = FixedPtsModels.bunny()
     data_pts, data_offset, data_scale = scale_model(data, resolution=RESOLUTION)
@@ -183,7 +182,7 @@ def diffuse(model: ChunkGrid[bool], repeat=1):
 
 
 with timed("\tTime: "):
-    diff = diffuse(model, repeat=min(3, dilation_step))
+    diff = diffuse(model, repeat=max(3, dilation_step))
 
 # =====================================================================
 # MinCut
@@ -191,7 +190,7 @@ with timed("\tTime: "):
 print("MinCut")
 
 # weights = ChunkGrid(diff.chunk_size, dtype=float, fill_value=0)
-weights = (diff ** 4) + 1e-05
+weights = (diff ** 4) + 1e-15
 weights[~crust] = 0
 weights.cleanup(remove=True)
 
@@ -232,7 +231,7 @@ for vPos in tqdm.tqdm(list(crust_outer.where()), desc="Linking Source"):
     for f in ChunkFace:  # type: ChunkFace
         fNode = get_node(tuple(vPos), f)
         fIndex = nodes_index[fNode]
-        graph.add_tedge(fIndex, 1000, 0)
+        graph.add_tedge(fIndex, 10000, 0)
 
 # Sink
 for vPos in tqdm.tqdm(list(crust_inner.where()), desc="Linking Sink"):
@@ -240,13 +239,15 @@ for vPos in tqdm.tqdm(list(crust_inner.where()), desc="Linking Sink"):
     for f in ChunkFace:  # type: ChunkFace
         fNode = get_node(tuple(vPos), f)
         fIndex = nodes_index[fNode]
-        graph.add_tedge(fIndex, 0, 1000)
+        graph.add_tedge(fIndex, 0, 10000)
 
 flow = graph.maxflow()
 segments = graph.get_grid_segments(np.arange(nodes_count))
 
-cut = ChunkGrid(CHUNKSIZE, int, 0)
-cut[[p for p, f in nodes]] = segments + 1
+segment0 = ChunkGrid(CHUNKSIZE, bool, False)
+segment0[[p for (p, f), s in zip(nodes, segments) if s == False]] = True
+segment1 = ChunkGrid(CHUNKSIZE, bool, False)
+segment1[[p for (p, f), s in zip(nodes, segments) if s == True]] = True
 
 # =====================================================================
 # Render
@@ -258,11 +259,6 @@ with timed("\tTime: "):
     fig = ren.make_figure()
     # fig.add_trace(ren.grid_voxel(model, opacity=0.1, name='Model'))
     # fig.add_trace(ren.grid_voxel(crust, opacity=0.1, name='Crust'))
-    # fig.add_trace(ren.grid_voxel(components == 1, opacity=0.1, name='Crust'))
-    # fig.add_trace(ren.grid_voxel(components == 3, opacity=0.1, name='Crust'))
-    # fig.add_trace(ren.grid_voxel(components == 4, opacity=0.1, name='Crust'))
-
-    # fig.add_trace(ren.grid_voxel(diff == 0, opacity=0.1, name='Crust'))
     scat_kwargs = dict(
         marker=dict(
             size=1.0,
@@ -278,7 +274,8 @@ with timed("\tTime: "):
 
     ren = VoxelRender()
     fig = ren.make_figure()
-    fig.add_trace(ren.grid_voxel(cut == 1, opacity=0.2, name='Cut 1'))
-    fig.add_trace(ren.grid_voxel(cut == 2, opacity=0.2, name='Cut 2'))
+    fig.add_trace(ren.grid_voxel(segment0, opacity=0.1, name='Segment 0'))
+    fig.add_trace(ren.grid_voxel(segment1, opacity=0.1, name='Segment 1'))
+    fig.add_trace(ren.grid_voxel(segment0 & segment1, opacity=1.0, name='Join'))
     fig.add_trace(CloudRender().make_scatter(data_pts, name='Model'))
     fig.show()
