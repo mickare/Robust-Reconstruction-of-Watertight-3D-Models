@@ -1,9 +1,9 @@
-from typing import Optional, Tuple, Dict, List, Set
+from typing import Optional, Tuple, Set
 
+import maxflow
 import numpy as np
 import tqdm
-from scipy import signal
-from scipy.sparse import dok_matrix
+from scipy import ndimage
 
 from data.chunks import ChunkGrid, Chunk, ChunkFace
 from filters.dilate import dilate
@@ -13,8 +13,6 @@ from model.model_pts import FixedPtsModels
 from render_cloud import CloudRender
 from render_voxel import VoxelRender
 from utils import timed
-
-import maxflow
 
 CHUNKSIZE = 8
 RESOLUTION = 64
@@ -172,9 +170,21 @@ def diffuse(model: ChunkGrid[bool], repeat=1):
     for r in range(repeat):
         tmp = result.copy(empty=True)
         for chunk in result.chunks:
-            conv = signal.convolve(chunk.padding(result, 1), kernel, mode='valid', method='direct')
-            conv[model.ensure_chunk_at_index(chunk.index).to_array()] = 0.0
+            padded = chunk.padding(result, 1)
+            ndimage.convolve(padded, kernel, output=padded, mode='constant', cval=1.0)
+            conv = padded[1:-1, 1:-1, 1:-1]
+            m = model.ensure_chunk_at_index(chunk.index, insert=False)
+            if m.is_filled():
+                if m.value:
+                    tmp.ensure_chunk_at_index(chunk.index).set_fill(0.0)
+                    continue
+            else:
+                conv[m.to_array()] = 0.0
             tmp.ensure_chunk_at_index(chunk.index).set_array(conv)
+            # Expand chunks
+            for f, i in ChunkGrid.iter_neighbors_indicies(chunk.index):
+                tmp.ensure_chunk_at_index(i)
+
         result = tmp
 
     result.cleanup(remove=True)
@@ -182,7 +192,7 @@ def diffuse(model: ChunkGrid[bool], repeat=1):
 
 
 with timed("\tTime: "):
-    diff = diffuse(model, repeat=max(3, dilation_step))
+    diff = diffuse(model, repeat=max(3, dilation_step) * 2)
 
 # =====================================================================
 # MinCut
@@ -190,7 +200,7 @@ with timed("\tTime: "):
 print("MinCut")
 
 # weights = ChunkGrid(diff.chunk_size, dtype=float, fill_value=0)
-weights = (diff ** 4) + 1e-15
+weights = (10 * (diff ** 4)) + 1e-20
 weights[~crust] = 0
 weights.cleanup(remove=True)
 
