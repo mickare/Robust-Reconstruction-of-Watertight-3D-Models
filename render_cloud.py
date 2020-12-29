@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 from data.chunks import ChunkGrid, Chunk
+from mathlib import Vec3i
 from model.model_mesh import MeshModelLoader
 from utils import merge_default
 
@@ -28,6 +29,8 @@ class CloudRender:
             """
 
     def _unwrap(self, pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if len(pts) == 0:
+            return np.empty(0), np.empty(0), np.empty(0)
         x, y, z = np.transpose(pts)
         if self.flip_zy:
             return x, z, y
@@ -66,22 +69,12 @@ class CloudRender:
 
     def make_value_scatter(self, grid: ChunkGrid, mask: ChunkGrid[bool], **kwargs):
 
-        points: List[np.ndarray] = []
-        values: List[np.ndarray] = []
-        for m in mask.chunks:  # type: Chunk
-            if m.any():
-                c: Chunk = grid.ensure_chunk_at_index(m.index, insert=False)
-                if c.any():
-                    p = np.argwhere(m.to_array())
-                    v = c.to_array()[tuple(p.T)]
-                    assert len(p) == len(v)
-                    points.append(p + c.position_low + 0.5)
-                    values.append(v)
+        items = list(grid.items(mask=mask))
+        points, values = zip(*items)  # type: Sequence[Vec3i], Sequence
+        pts = np.array(points, dtype=np.float32) + 0.5
+        values = np.array(values)
 
-        pts = np.concatenate(points)
-        val = np.concatenate(values)
-
-        merge_default(kwargs, marker=dict(color=val))
+        merge_default(kwargs, marker=dict(color=values))
         return self.make_scatter(pts, **kwargs)
 
     def plot(self, *args: np.ndarray, size=0.5, **kwargs):
