@@ -30,60 +30,74 @@ sorted_keys = sorted(diffusion.chunks.keys())
 
 for key in sorted_keys:
     chunk = diffusion.chunks.get(key)
-    if chunk.is_filled() and chunk.value == 1.0:
+    crust_chunk = crust.chunks.get(key)
+    if not crust_chunk.any():
         continue
 
     # Add nodes
-    set_x = tuple(np.array(key) + (-1, 0, 0)) not in nodes
-    set_y = tuple(np.array(key) + (0, -1, 0)) not in nodes
-    set_z = tuple(np.array(key) + (0, 0, -1)) not in nodes
     shape_x, shape_y, shape_z = chunk.shape[0] + 1, chunk.shape[1] + 1, chunk.shape[2] + 1
     nodes[key] = np.zeros((shape_x, shape_y, shape_z, 3), dtype=int)
-    if not set_x:
-        nodes[key][0] = nodes[tuple(np.array(key) + (-1, 0, 0))][-1]
-    else:
-        nodes[key][0] = np.array(g.add_nodes(shape_y * shape_z * 3)).reshape(
-            (shape_y, shape_z, 3))
-    if not set_y:
-        nodes[key][:, 0] = nodes[tuple(np.array(key) + (0, -1, 0))][:][-1]
-    else:
-        nodes[key][:, 0] = np.array(g.add_nodes(shape_x * shape_z * 3)).reshape(
-            (shape_x, shape_z, 3))
-    if not set_z:
-        nodes[key][:, :, 0] = nodes[tuple(np.array(key) + (0, 0, -1))][:][:][-1]
-    else:
-        nodes[key][:, :, 0] = np.array(g.add_nodes(shape_x * shape_y * 3)).reshape(
-            (shape_x, shape_y, 3))
-    nodes[key][1:, 1:, 1:] = np.array(
-        g.add_nodes((shape_x - 1) * (shape_y - 1) * (shape_z - 1) * 3)).reshape(
-        (shape_x - 1, shape_y - 1, shape_z - 1, 3))
+    crust_chunk = crust_chunk.to_array()
+    for i, i_ in enumerate(nodes[key][:-2]):
+        for j, j_ in enumerate(nodes[key][i, :-2]):
+            for k, k_ in enumerate(nodes[key][j, :-2]):
+                if not crust_chunk[i][j][k]:
+                    continue
+                nodes[key][i][j][k] = g.add_nodes(3)
 
+for key in sorted_keys:
+    if not crust.chunks.get(key).any():
+        continue
+
+    # Copy nodes
+    set_x = tuple(np.array(key) + (1, 0, 0)) in nodes
+    set_y = tuple(np.array(key) + (0, 1, 0)) in nodes
+    set_z = tuple(np.array(key) + (0, 0, 1)) in nodes
+    if set_x:
+        nodes[key][-1] = nodes[tuple(np.array(key) + (1, 0, 0))][0]
+    if set_y:
+        nodes[key][:, -1] = nodes[tuple(np.array(key) + (0, 1, 0))][:][0]
+    if set_z:
+        nodes[key][:, :, -1] = nodes[tuple(np.array(key) + (0, 0, 1))][:][:][0]
+
+for key in nodes.keys():
+    chunk = diffusion.chunks.get(key)
+    crust_chunk = crust.chunks.get(key).to_array()
     # Add edges
     capacities = chunk.to_array()
-    for i, i_ in enumerate(nodes[key][:-1]):
-        for j, j_ in enumerate(nodes[key][i, :-1]):
-            for k, k_ in enumerate(nodes[key][j, :-1]):
+    for i, i_ in enumerate(nodes[key][:-2]):
+        for j, j_ in enumerate(nodes[key][i, :-2]):
+            for k, k_ in enumerate(nodes[key][j, :-2]):
                 cap = capacities[i][j][k]
-                if cap == 1.0:
+                if not crust_chunk[i][j][k]:
                     continue
                 n = nodes[key][i][j][k]
                 g.add_edge(n[0], n[1], cap, cap)
                 g.add_edge(n[0], n[2], cap, cap)
                 g.add_edge(n[1], n[2], cap, cap)
                 n1 = nodes[key][i + 1][j][k]
+                if not n1.any():
+                    nodes[key][i + 1][j][k] = g.add_nodes(3)
+                    n1 = nodes[key][i + 1][j][k]
                 g.add_edge(n[0], n1[1], cap, cap)
                 g.add_edge(n[2], n1[1], cap, cap)
                 n2 = nodes[key][i][j + 1][k]
+                if not n2.any():
+                    nodes[key][i][j + 1][k] = g.add_nodes(3)
+                    n2 = nodes[key][i][j + 1][k]
                 g.add_edge(n[0], n2[2], cap, cap)
                 g.add_edge(n[1], n2[2], cap, cap)
                 g.add_edge(n2[2], n1[1], cap, cap)
                 n3 = nodes[key][i][j][k + 1]
+                if not n3.any():
+                    nodes[key][i][j][k + 1] = g.add_nodes(3)
+                    n3 = nodes[key][i][j][k + 1]
                 g.add_edge(n[1], n3[0], cap, cap)
                 g.add_edge(n[2], n3[0], cap, cap)
                 g.add_edge(n1[1], n3[0], cap, cap)
                 g.add_edge(n2[2], n3[0], cap, cap)
 
-g.maxflow()
+flow = g.maxflow()
 
 surface = {}
 for key in nodes.keys():
