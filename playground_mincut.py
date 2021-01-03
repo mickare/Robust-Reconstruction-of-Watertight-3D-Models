@@ -178,7 +178,7 @@ def diffuse(model: ChunkGrid[bool], repeat=1):
 # =====================================================================
 
 
-def mincut(diff: ChunkGrid[float], crust: ChunkGrid[bool], s=4, a=1e-20):
+def mincut(diff: ChunkGrid[float], crust: ChunkGrid[bool], crust_outer: ChunkGrid[bool], crust_inner: ChunkGrid[bool], s=4, a=1e-20):
     # weights = ChunkGrid(diff.chunk_size, dtype=float, fill_value=0)
     weights = (diff ** s) + a
     weights[~crust] = 0
@@ -248,91 +248,91 @@ def mincut(diff: ChunkGrid[float], crust: ChunkGrid[bool], s=4, a=1e-20):
     segment1[[p for node, s in zip(nodes, segments) if s == True
               for p in to_voxel(node)]] = True
 
-    return segment0, segment1
+    return segment0, segment1, segments, voxels, nodes_index
 
 
 # =====================================================================
 # Render
 # =====================================================================
+if __name__ == '__main__':
+    CHUNKSIZE = 8
+    resolution = 32
 
-CHUNKSIZE = 8
-resolution = 32
-
-print("Loading model")
-with timed("\tTime: "):
-    # data = FixedPtsModels.bunny()
-    data = PtsModelLoader().load("models/bunny/bunnyData.pts")
-    data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
-    model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
-    model[data_pts] = True
-    model.pad_chunks(2)
-    model.cleanup()
-
-initial_crust = model
-
-for resolution_step in range(0, 2):
-    print(f"RESOLUTION STEP: {resolution_step}")
-    ren = VoxelRender()
-    fig = ren.make_figure()
-    fig.add_trace(ren.grid_voxel(initial_crust, opacity=0.1, name='Initial'))
-    fig.add_trace(CloudRender().make_scatter(data_pts, name='Model'))
-    fig.show()
-
-    print("Dilation")
+    print("Loading model")
     with timed("\tTime: "):
-        crust, components = crust_dilation(initial_crust)
-        crust_outer = dilate(components == 2) & crust
-        crust_inner = dilate((components != 1) & (components != 2)) & crust
+        # data = FixedPtsModels.bunny()
+        data = PtsModelLoader().load("models/bunny/bunnyData.pts")
+        data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
+        model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
+        model[data_pts] = True
+        model.pad_chunks(2)
+        model.cleanup()
 
-    ren = VoxelRender()
-    fig = ren.make_figure()
-    fig.add_trace(ren.grid_voxel(crust_outer, opacity=0.2, name='Outer'))
-    fig.add_trace(ren.grid_voxel(crust_inner, opacity=0.2, name='Inner'))
-    fig.add_trace(CloudRender().make_scatter(data_pts, name='Model'))
-    fig.show()
+    initial_crust = model
 
-    print("Diffusion")
-    with timed("\tTime: "):
-        diff = diffuse(model, repeat=3)
-
-    print("MinCut")
-    with timed("\tTime: "):
-        segment0, segment1 = mincut(diff, crust)
-        thincrust = segment0 & segment1
-
-    print("Render")
-    with timed("\tTime: "):
-        # ren = VoxelRender()
-        # fig = ren.make_figure()
-        # fig.add_trace(CloudRender().make_value_scatter(
-        #     diff, mask=crust, name="Diffusion",
-        #     marker=dict(
-        #         size=1.0,
-        #         colorscale=[[0.0, 'rgb(0,0,0)'], [1.0, 'rgb(255,255,255)']],
-        #         cmin=0.0,
-        #         cmax=1.0
-        #     ),
-        #     mode="markers"
-        # ))
-        # fig.show()
-
+    for resolution_step in range(0, 2):
+        print(f"RESOLUTION STEP: {resolution_step}")
         ren = VoxelRender()
         fig = ren.make_figure()
-        fig.add_trace(ren.grid_voxel(segment0, opacity=0.1, name='Segment 0'))
-        fig.add_trace(ren.grid_voxel(segment1, opacity=0.1, name='Segment 1'))
-        fig.add_trace(ren.grid_voxel(thincrust, opacity=1.0, name='Join'))
+        fig.add_trace(ren.grid_voxel(initial_crust, opacity=0.1, name='Initial'))
         fig.add_trace(CloudRender().make_scatter(data_pts, name='Model'))
         fig.show()
 
-    print("Volumetric refinment")
-    with timed("\tTime: "):
-        initial_crust = thincrust.split(2)
-        initial_crust.pad_chunks(1)
-        initial_crust = dilate(initial_crust)
+        print("Dilation")
+        with timed("\tTime: "):
+            crust, components = crust_dilation(initial_crust)
+            crust_outer = dilate(components == 2) & crust
+            crust_inner = dilate((components != 1) & (components != 2)) & crust
 
-        resolution *= 2
-        data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
-        reinserted = ChunkGrid(initial_crust.chunk_size, np.bool8, fill_value=False)
-        reinserted[data_pts] = True
-        reinserted.pad_chunks(1)
-        initial_crust |= dilate(reinserted, steps=3)
+        ren = VoxelRender()
+        fig = ren.make_figure()
+        fig.add_trace(ren.grid_voxel(crust_outer, opacity=0.2, name='Outer'))
+        fig.add_trace(ren.grid_voxel(crust_inner, opacity=0.2, name='Inner'))
+        fig.add_trace(CloudRender().make_scatter(data_pts, name='Model'))
+        fig.show()
+
+        print("Diffusion")
+        with timed("\tTime: "):
+            diff = diffuse(model, repeat=3)
+
+        print("MinCut")
+        with timed("\tTime: "):
+            segment0, segment1, segments, voxels, nodes_index = mincut(diff, crust)
+            thincrust = segment0 & segment1
+
+        print("Render")
+        with timed("\tTime: "):
+            # ren = VoxelRender()
+            # fig = ren.make_figure()
+            # fig.add_trace(CloudRender().make_value_scatter(
+            #     diff, mask=crust, name="Diffusion",
+            #     marker=dict(
+            #         size=1.0,
+            #         colorscale=[[0.0, 'rgb(0,0,0)'], [1.0, 'rgb(255,255,255)']],
+            #         cmin=0.0,
+            #         cmax=1.0
+            #     ),
+            #     mode="markers"
+            # ))
+            # fig.show()
+
+            ren = VoxelRender()
+            fig = ren.make_figure()
+            fig.add_trace(ren.grid_voxel(segment0, opacity=0.1, name='Segment 0'))
+            fig.add_trace(ren.grid_voxel(segment1, opacity=0.1, name='Segment 1'))
+            fig.add_trace(ren.grid_voxel(thincrust, opacity=1.0, name='Join'))
+            fig.add_trace(CloudRender().make_scatter(data_pts, name='Model'))
+            fig.show()
+
+        print("Volumetric refinment")
+        with timed("\tTime: "):
+            initial_crust = thincrust.split(2)
+            initial_crust.pad_chunks(1)
+            initial_crust = dilate(initial_crust)
+
+            resolution *= 2
+            data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
+            reinserted = ChunkGrid(initial_crust.chunk_size, np.bool8, fill_value=False)
+            reinserted[data_pts] = True
+            reinserted.pad_chunks(1)
+            initial_crust |= dilate(reinserted, steps=3)
