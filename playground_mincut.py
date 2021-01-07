@@ -264,92 +264,94 @@ if __name__ == '__main__':
     CHUNKSIZE = 16
     resolution = 32
 
-    print("Loading model")
-    with timed("\tTime: "):
-        data = FixedPtsModels.bunny()
-        # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
-        data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
-        model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
-        model[data_pts] = True
-        model.pad_chunks(2)
-        model.cleanup()
+    with multiprocessing.Pool() as pool:
 
-    initial_crust: ChunkGrid[np.bool8] = model.copy()
-    ren = VoxelRender()
-    fig = ren.make_figure()
-    fig.add_trace(ren.grid_voxel(initial_crust, opacity=0.1, name='Initial'))
-    fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
-    fig.show()
+        print("Loading model")
+        with timed("\tTime: "):
+            data = FixedPtsModels.bunny()
+            # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
+            data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
+            model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
+            model[data_pts] = True
+            model.pad_chunks(2)
+            model.cleanup()
 
-    """
-    Only one dilation to find the outer and inner crust at a lower resolution.
-    """
-    print("Dilation")
-    with timed("\tTime: "):
-        crust, components = crust_dilation(initial_crust, max_steps=100)
-        plot_voxels(components == 0, components)
-        crust_dilate = dilate(crust)
-        outer_fill = components == 2
-        crust_outer = outer_fill & crust_dilate
-        crust_inner = (components != 1) & (components != 2) & crust_dilate
-
-    """
-    Approximate Voxel near Medial Axis, by propagating a Normal field inwards.
-    Then for each voxel compute a normal cone and mark the voxel as inner component when the cone angle is greater than 90°.
-    """
-
-    for resolution_step in range(0, 4):
-        print(f"RESOLUTION STEP: {resolution_step}")
-        crust_inner |= crust_fix(crust, outer_fill, crust_outer, crust_inner, data_pts)
-
+        initial_crust: ChunkGrid[np.bool8] = model.copy()
         ren = VoxelRender()
         fig = ren.make_figure()
-        fig.add_trace(ren.grid_voxel(crust_outer, opacity=0.2, name='Outer'))
-        fig.add_trace(ren.grid_voxel(crust_inner, opacity=0.2, name='Inner'))
+        fig.add_trace(ren.grid_voxel(initial_crust, opacity=0.1, name='Initial'))
         fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
         fig.show()
 
-        print("Diffusion")
-        with timed("\tTime: "):
-            diff = diffuse(model, repeat=3)
-
-        print("MinCut")
-        with timed("\tTime: "):
-            segment0, segment1, segments, voxels, nodes_index = mincut(diff, crust)
-            thincrust = segment0 & segment1
-
+        """
+        Only one dilation to find the outer and inner crust at a lower resolution.
+        """
         print("Dilation")
         with timed("\tTime: "):
-            crust, components = crust_dilation(initial_crust)
-            crust_outer = dilate(components == 2) & crust
-            crust_inner = dilate((components != 1) & (components != 2)) & crust
-
-        print("Render")
-        with timed("\tTime: "):
-            ren = VoxelRender()
-            fig = ren.make_figure()
-            fig.add_trace(ren.grid_voxel(segment0, opacity=0.1, name='Segment 0'))
-            fig.add_trace(ren.grid_voxel(segment1, opacity=0.1, name='Segment 1'))
-            fig.add_trace(ren.grid_voxel(thincrust, opacity=1.0, name='Join'))
-            fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
-            fig.show()
-
-        print("Volumetric refinment")
-        with timed("\tTime: "):
-            # Rebuild model
-            resolution *= 2
-            data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
-            model = ChunkGrid(initial_crust.chunk_size, np.bool8, fill_value=np.bool8(False))
-            model[data_pts] = np.bool8(True)
-            model.pad_chunks(1)
-            model.cleanup()
-
-            # Build new crust
-            crust = thincrust.split(2) | model
-            crust = dilate(crust, steps=3)
-
-            components, count = fill_components(crust, max_count=2)
+            crust, components = crust_dilation(initial_crust, max_steps=100)
+            plot_voxels(components == 0, components)
             crust_dilate = dilate(crust)
             outer_fill = components == 2
             crust_outer = outer_fill & crust_dilate
             crust_inner = (components != 1) & (components != 2) & crust_dilate
+
+        """
+        Approximate Voxel near Medial Axis, by propagating a Normal field inwards.
+        Then for each voxel compute a normal cone and mark the voxel as inner component when the cone angle is greater than 90°.
+        """
+
+        for resolution_step in range(0, 4):
+            print(f"RESOLUTION STEP: {resolution_step}")
+            crust_inner |= crust_fix(crust, outer_fill, crust_outer, crust_inner, data_pts, pool=pool)
+
+            ren = VoxelRender()
+            fig = ren.make_figure()
+            fig.add_trace(ren.grid_voxel(crust_outer, opacity=0.2, name='Outer'))
+            fig.add_trace(ren.grid_voxel(crust_inner, opacity=0.2, name='Inner'))
+            fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
+            fig.show()
+
+            print("Diffusion")
+            with timed("\tTime: "):
+                diff = diffuse(model, repeat=3)
+
+            print("MinCut")
+            with timed("\tTime: "):
+                segment0, segment1, segments, voxels, nodes_index = mincut(diff, crust, crust_outer, crust_inner)
+                thincrust = segment0 & segment1
+
+            print("Dilation")
+            with timed("\tTime: "):
+                crust, components = crust_dilation(initial_crust)
+                crust_outer = dilate(components == 2) & crust
+                crust_inner = dilate((components != 1) & (components != 2)) & crust
+
+            print("Render")
+            with timed("\tTime: "):
+                ren = VoxelRender()
+                fig = ren.make_figure()
+                fig.add_trace(ren.grid_voxel(segment0, opacity=0.1, name='Segment 0'))
+                fig.add_trace(ren.grid_voxel(segment1, opacity=0.1, name='Segment 1'))
+                fig.add_trace(ren.grid_voxel(thincrust, opacity=1.0, name='Join'))
+                fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
+                fig.show()
+
+            print("Volumetric refinment")
+            with timed("\tTime: "):
+                # Rebuild model
+                resolution *= 2
+                data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
+                model = ChunkGrid(initial_crust.chunk_size, np.bool8, fill_value=np.bool8(False))
+                model[data_pts] = np.bool8(True)
+                model.pad_chunks(1)
+                model.cleanup()
+
+                # Build new crust
+                crust = thincrust.split(2) | model
+                crust = dilate(crust, steps=1)
+
+                components, count = fill_components(crust, max_count=2)
+                crust_dilate = dilate(crust)
+                outer_fill = components == 2
+                crust_outer = outer_fill & crust_dilate
+                crust_inner = (components != 1) & (components != 2) & crust_dilate
