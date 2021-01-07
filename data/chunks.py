@@ -4,7 +4,7 @@ import operator
 from typing import Union, Tuple, Iterator, Optional, Generic, TypeVar, Callable, Type, Sequence, Set
 
 import numpy as np
-import sparse
+from scipy import ndimage
 
 from data.data_utils import PositionIter
 from data.index_dict import IndexDict, Index
@@ -102,11 +102,13 @@ class ChunkHelper:
 class Chunk(Generic[V]):
     __slots__ = ('_index', '_size', '_dtype', '_fill_value', '_is_filled', '_value')
 
-    def __init__(self, index: Vec3i, size: int, dtype: Optional[Type[V]] = None, fill_value: Optional[V] = None):
+    def __init__(self, index: Vec3i, size: int, dtype: Optional[Union[np.dtype, Type[V]]] = None,
+                 fill_value: Optional[V] = None):
         self._index: Vec3i = np.asarray(index, dtype=np.int)
         self._size = size
-        self._dtype = np.dtype(dtype).type
-        self._fill_value = self._dtype() if fill_value is None else self._dtype(fill_value)
+        self._dtype = np.dtype(dtype)
+        self._fill_value = fill_value
+        self.set_fill(self._fill_value)
         self._is_filled = True
         self._value: Union[V, np.ndarray] = self._fill_value
 
@@ -123,12 +125,21 @@ class Chunk(Generic[V]):
         return self._size
 
     @property
-    def dtype(self):
+    def dtype(self) -> np.dtype:
         return self._dtype
+
+    def __dtype(self, other: Optional[Union[np.dtype, Type[M]]] = None) -> np.dtype:
+        return np.dtype(other) if other is not None else self._dtype
 
     @property
     def shape(self) -> Tuple[int, int, int]:
-        return self._size, self._size, self._size
+        cs = self._size
+        return cs, cs, cs
+
+    @property
+    def array_shape(self) -> Tuple[int, ...]:
+        cs = self._size
+        return cs, cs, cs, *self._dtype.shape
 
     @property
     def position_low(self) -> Vec3i:
@@ -151,7 +162,6 @@ class Chunk(Generic[V]):
         return self.to_array()[tuple(self.inner(pos))]
 
     def set_pos(self, pos: Vec3i, value: V):
-        value = value if self._dtype is None else self._dtype(value)
         inner = self.inner(pos)
         arr = self.to_array()
         arr[tuple(inner)] = value
@@ -164,14 +174,18 @@ class Chunk(Generic[V]):
             self.set_pos(pos, value)
 
     def set_fill(self, value: V) -> "Chunk[V]":
-        value = value if self._dtype is None else self._dtype(value)
+        if not self._dtype.subdtype:
+            value = self._dtype.type(value)
         self._value = value
         self._is_filled = True
         return self
 
     def set_array(self, value: np.ndarray) -> "Chunk[V]":
-        value = np.asarray(value, dtype=self._dtype)
-        assert self.shape == value.shape, f"{self.shape} != {value.shape}"
+        if isinstance(value, np.ndarray):
+            value = value.astype(self._dtype.base)
+        else:
+            value = np.asarray(value, dtype=self._dtype.base)
+        assert self.array_shape == value.shape, f"{self.array_shape} != {value.shape}"
         self._value = value
         self._is_filled = False
         return self
@@ -188,7 +202,7 @@ class Chunk(Generic[V]):
         if other.is_filled() and other._value:
             c.set_fill(self._value)
         else:
-            arr = np.full(self.shape, self._fill_value, dtype=self._dtype)
+            arr = np.full(self.shape, c._fill_value, dtype=self._dtype)
             arr[other._value] = self._value[other._value]
             c.set_array(arr)
         return c
@@ -233,19 +247,29 @@ class Chunk(Generic[V]):
         return self.to_array()[item]
 
     def __setitem__(self, key: Union[np.ndarray, "Chunk"], value: Union[V, np.ndarray, "Chunk"]):
+        is_value_chunk = isinstance(value, Chunk)
+        if is_value_chunk:
+            assert value._size == self._size
+
         if isinstance(key, Chunk):
+            if key.all():
+                # Fast set
+                if is_value_chunk:
+                    self._is_filled = value._is_filled
+                    self._value = value._value
+                    return
             key = key.to_array().astype(np.bool8)
-        if isinstance(value, Chunk):
-            value = value.to_array()
+
         arr = self.to_array()
-        arr[key] = value
+        if is_value_chunk:  # Masked
+            arr[key] = value.to_array()[key]
+        else:
+            arr[key] = value
         self.set_array(arr)
 
     def copy(self, empty=False, dtype=None, fill_value: Optional[V] = None):
-        dtype = dtype or self._dtype
+        dtype = self.__dtype(dtype)
         fill_value = self._fill_value if fill_value is None else fill_value
-        if dtype is not None:
-            fill_value = dtype(fill_value)
         c = Chunk(self._index, self._size, dtype=dtype, fill_value=fill_value)
         if not empty:
             if self.is_filled():
@@ -262,6 +286,9 @@ class Chunk(Generic[V]):
         # New chunk size
         chunk_size = int(chunk_size or self._size)
         assert chunk_size > 0
+
+        dtype = self._dtype
+
         # Voxel repeats to achieve chunk size
         repeats = chunk_size / split_size
         assert repeats > 0 and repeats % 1 == 0  # Chunk size must be achieved by duplication of voxels
@@ -269,7 +296,7 @@ class Chunk(Generic[V]):
 
         for offset in ChunkHelper.indexGrid[:splits]:
             new_index = np.add(self._index * splits, offset)
-            c = Chunk(new_index, size=chunk_size, fill_value=self._fill_value)
+            c = Chunk(new_index, size=chunk_size, dtype=dtype, fill_value=self._fill_value)
             if self.is_filled():
                 c.set_fill(self._value)
             else:
@@ -334,7 +361,13 @@ class Chunk(Generic[V]):
             return self.to_array()
         if value is None:
             value = self._fill_value
-        arr = np.pad(self.to_array(), padding, constant_values=value)
+
+        arr = self.to_array()
+        pad = padding
+        if arr.ndim > 3:
+            pad = (pad, pad), (pad, pad), (pad, pad), *([(0, 0)] * (arr.ndim - 3))
+        arr = np.pad(self.to_array(), pad, constant_values=value)
+
         for face, index in grid.iter_neighbors_indicies(self._index):
             c = grid.ensure_chunk_at_index(index, insert=False)
             pad = c.to_array()[face.flip().slice(padding)]
@@ -349,7 +382,7 @@ class Chunk(Generic[V]):
 
     def apply(self, func: Callable[[Union[np.ndarray, V]], Union[np.ndarray, M]],
               dtype: Optional[Type[M]] = None, inplace=False, ) -> "Chunk[M]":
-        dtype = dtype or self.dtype
+        dtype = self.__dtype(dtype)
         # Inplace selection
         c = self if inplace else self.copy()
         res = func(self._value)
@@ -358,48 +391,41 @@ class Chunk(Generic[V]):
             if dtype is not None:
                 res = res.astype(dtype)
         elif dtype is not None:
-            assert isinstance(res, dtype)
+            if not isinstance(res, np.ndarray):
+                res = dtype.type(res)
         c._value = res
 
         if dtype is not None:
             c._dtype = dtype
-            c._fill_value = dtype(self._fill_value)
+            c._fill_value = dtype.type(self._fill_value)
         return c
 
     def join(self, rhs, func: Callable[[Union[np.ndarray, V], Union[np.ndarray, V]], Union[np.ndarray, M]],
              dtype: Optional[Type[M]] = None, inplace=False, ) -> "Chunk[M]":
-        dtype = dtype or self.dtype
+        dtype = self.__dtype(dtype)
         # Inplace selection
         c = self if inplace else self.copy()
 
         if isinstance(rhs, Chunk):
             c._is_filled = c._is_filled & rhs._is_filled
-            res = func(c._value, rhs._value)
+            c._value = func(c._value, rhs._value)
         else:
             c._is_filled = c._is_filled
-            res = func(c._value, rhs)
-
-        if not c._is_filled:
-            assert isinstance(res, np.ndarray)
-            if dtype is not None:
-                res = res.astype(dtype)
-        elif dtype is not None:
-            res = dtype(res)
+            c._value = func(c._value, rhs)
 
         if dtype is not None:
             c._dtype = dtype
             try:
                 if isinstance(rhs, Chunk):
-                    c._fill_value = dtype(func(self._fill_value, rhs._fill_value))
+                    c._fill_value = func(self._fill_value, rhs._fill_value)
                 else:
-                    c._fill_value = dtype(func(self._fill_value, rhs))
+                    c._fill_value = func(self._fill_value, rhs)
             except Exception:
                 try:
-                    c._fill_value = dtype(self._fill_value)
+                    c._fill_value = dtype.type(self._fill_value)
                 except Exception:
                     pass
 
-        c._value = res
         return c
 
     # Comparison Operator
@@ -535,20 +561,48 @@ class Chunk(Generic[V]):
         else:
             return np.sum(self._value, dtype=dtype)
 
+    def _correlate_filter(self, func, kernel: np.ndarray, grid: "ChunkGrid[V]",
+                          fill_value: Optional[M] = None, **kwargs) -> "Chunk[M]":
+        assert kernel.ndim >= 3 and kernel.shape[0] == kernel.shape[1] == kernel.shape[2]
+        fill_value = fill_value if fill_value is not None else self._fill_value
+        pad = np.max(kernel.shape) // 2
+        padded = self.padding(grid, pad, corners=True, value=fill_value)
+        tmp = func(padded, kernel, **kwargs)
+        arr = tmp[pad:-pad, pad:-pad, pad:-pad]
+        assert arr.shape == self.array_shape
+        return Chunk(self._index, self._size, self._dtype, fill_value=fill_value).set_array(arr)
+
+    @classmethod
+    def _stack(cls, chunks: Sequence["Chunk[V]"], dtype: np.dtype, fill_value=None) -> "Chunk[np.ndarray]":
+        assert dtype.shape
+        index = chunks[0]._index
+        size = chunks[0]._size
+        new_chunk = Chunk(index, size, dtype, fill_value)
+        if all(c._is_filled for c in chunks):
+            new_chunk.set_fill(np.array([c.value for c in chunks], dtype=dtype.base))
+        else:
+            arr = np.array([c.to_array() for c in chunks], dtype=dtype.base).transpose((1, 2, 3, 0))
+            new_chunk.set_array(arr)
+        return new_chunk
+
 
 class ChunkGrid(Generic[V]):
     __slots__ = ('_chunk_size', '_dtype', '_fill_value', 'chunks')
 
-    def __init__(self, chunk_size: int, dtype: Optional[Type[V]] = None, fill_value: Optional[V] = None):
+    def __init__(self, chunk_size: int, dtype: Optional[Union[np.dtype, Type[V]]] = None,
+                 fill_value: Optional[V] = None):
         assert chunk_size > 0
         self._chunk_size = chunk_size
-        self._dtype = np.dtype(dtype).type
-        self._fill_value = self._dtype() if fill_value is None else self._dtype(fill_value)
+        self._dtype = np.dtype(dtype)
+        self._fill_value = fill_value
         self.chunks: IndexDict[Chunk[V]] = IndexDict()
 
     @property
-    def dtype(self) -> Type[V]:
+    def dtype(self) -> np.dtype:
         return self._dtype
+
+    def __dtype(self, other: Optional[Union[np.dtype, Type[M]]] = None) -> np.dtype:
+        return np.dtype(other) if other is not None else self._dtype
 
     @property
     def chunk_size(self) -> int:
@@ -570,37 +624,46 @@ class ChunkGrid(Generic[V]):
     def astype(self, dtype: Type[M]) -> "ChunkGrid[M]":
         if self._dtype == dtype:
             return self
-        grid_new: ChunkGrid[M] = ChunkGrid(self._chunk_size, dtype, fill_value=dtype(self._fill_value))
+        new_grid: ChunkGrid[M] = ChunkGrid(self._chunk_size, dtype, fill_value=dtype(self._fill_value))
+        # Method cache (prevent lookup in loop)
+        __new_grid_chunks_insert = new_grid.chunks.insert
         for src in self.chunks.values():
-            grid_new.chunks.insert(src.index, src.astype(dtype))
-        return grid_new
+            __new_grid_chunks_insert(src.index, src.astype(dtype))
+        return new_grid
 
     def convert(self, func: Callable[[V], M]) -> "ChunkGrid[M]":
         func_vec = np.vectorize(func)
-        grid_new: ChunkGrid[M] = ChunkGrid(self._chunk_size, fill_value=func(self._fill_value))
+        new_grid: ChunkGrid[M] = ChunkGrid(self._chunk_size, fill_value=func(self._fill_value))
+        # Method cache (prevent lookup in loop)
+        __new_grid_chunks_insert = new_grid.chunks.insert
         for src in self.chunks:
-            grid_new.chunks.insert(src.index, src.convert(func, func_vec))
-        return grid_new
+            __new_grid_chunks_insert(src.index, src.convert(func, func_vec))
+        return new_grid
 
-    def copy(self, empty=False, dtype: Optional[Type[M]] = None, fill_value: Optional[M] = None) -> "ChunkGrid[M]":
-        dtype = dtype or self._dtype
+    def copy(self, empty=False, dtype: Optional[Union[np.dtype, Type[M]]] = None,
+             fill_value: Optional[M] = None) -> "ChunkGrid[M]":
+        dtype = self.__dtype(dtype)
         fill_value = self._fill_value if fill_value is None else fill_value
-        if dtype is not None:
-            fill_value = dtype(fill_value)
-        new = ChunkGrid(self._chunk_size, dtype, fill_value)
+        new_grid = ChunkGrid(self._chunk_size, dtype, fill_value)
         if not empty:
+            # Method cache (prevent lookup in loop)
+            __new_grid_chunks_insert = new_grid.chunks.insert
             for src in self.chunks.values():
-                new.chunks.insert(src.index, src.copy(dtype=dtype, fill_value=fill_value))
-        return new
+                __new_grid_chunks_insert(src.index, src.copy(dtype=dtype, fill_value=fill_value))
+        return new_grid
 
     def split(self, splits: int, chunk_size: Optional[int] = None) -> "ChunkGrid[V]":
         assert splits > 0 and self._chunk_size % splits == 0
         chunk_size = chunk_size or self._chunk_size
-        grid_new: ChunkGrid[V] = ChunkGrid(chunk_size, self._dtype, self._fill_value)
+        new_grid: ChunkGrid[V] = ChunkGrid(chunk_size, self._dtype, self._fill_value)
+
+        # Method cache (prevent lookup in loop)
+        __new_grid_chunks_insert = new_grid.chunks.insert
+
         for c in self.chunks.values():
             for c_new in c.split(splits, chunk_size):
-                grid_new.chunks.insert(c_new.index, c_new)
-        return grid_new
+                __new_grid_chunks_insert(c_new.index, c_new)
+        return new_grid
 
     def _new_chunk_factory(self, index: Index) -> Chunk[V]:
         return Chunk(index, self._chunk_size, self._dtype, self._fill_value)
@@ -644,11 +707,14 @@ class ChunkGrid(Generic[V]):
         """True if any chunk contains any True value"""
         return any(c.any() for c in self.chunks.values())
 
-    def to_sparse(self, x: Union[int, slice, None] = None, y: Union[int, slice, None] = None,
-                  z: Union[int, slice, None] = None) -> Tuple[sparse.SparseArray, Vec3i]:
-        """Convert this grid to a sparse matrix and a offset vector to the zero index"""
+    def to_dense(self, x: Union[int, slice, None] = None, y: Union[int, slice, None] = None,
+                 z: Union[int, slice, None] = None, return_offset=False) -> Union[np.ndarray, Tuple[np.ndarray, Vec3i]]:
+        """Convert the grid to a dense numpy array"""
         if len(self.chunks) == 0:
-            return sparse.zeros((0, 0)), np.zeros(3)
+            if return_offset:
+                return np.empty((0, 0, 0)), np.zeros(3)
+            else:
+                return np.empty((0, 0, 0))
 
         # Variable cache
         cs = self._chunk_size
@@ -656,64 +722,85 @@ class ChunkGrid(Generic[V]):
         index_min, index_max = self.chunks.minmax()
         pos_min = index_min * cs
         pos_max = (index_max + 1) * cs
-        it = PositionIter(x, y, z, low=pos_min, high=pos_max)
+        voxel_it = PositionIter(x, y, z, low=pos_min, high=pos_max)
 
-        chunk_min = it.start // cs
-        chunk_max = it.stop // cs
+        chunk_it = voxel_it // cs
+        chunk_min = np.asarray(chunk_it.start)
+        chunk_max = np.asarray(chunk_it.stop)
         chunk_len = chunk_max - chunk_min
 
-        dok = sparse.DOK(tuple(chunk_len * cs), dtype=self.dtype, fill_value=self.fill_value)
-        for c in self.chunks.values():
-            if np.all(chunk_min <= c.index) and np.all(c.index <= chunk_max):
-                u, v, w = (c.index - chunk_min) * cs
-                dok[u:u + cs, v:v + cs, w:w + cs] = c.to_array()
+        res = np.full(tuple(chunk_len * cs), self.fill_value, dtype=self.dtype)
 
-        start = it.start - chunk_min * cs
-        stop = it.stop - chunk_min * cs
-        step = it.step
-        return (
-            dok.to_coo()[start[0]:stop[0]:step[0], start[1]:stop[1]:step[1], start[2]:stop[2]:step[2]],
-            chunk_min * cs
-        )
+        # Method cache (prevent lookup in loop)
+        __self_chunks_get = self.chunks.get
+        __chunk_to_array = Chunk.to_array
 
-    def to_dense(self, *args, **kwargs) -> np.ndarray:
-        """Convert the grid to a dense numpy array"""
-        res, offset = self.to_sparse(*args, **kwargs)
-        return res.todense()
+        for index in chunk_it:
+            c = __self_chunks_get(index, None)
+            if c is not None:
+                u, v, w = (index - chunk_min) * cs
+                res[u:u + cs, v:v + cs, w:w + cs] = __chunk_to_array(c)
+
+        start = voxel_it.start - chunk_min * cs
+        stop = voxel_it.stop - chunk_min * cs
+        step = voxel_it.step
+        if return_offset:
+            return (
+                res[start[0]:stop[0]:step[0], start[1]:stop[1]:step[1], start[2]:stop[2]:step[2]],
+                chunk_min * cs
+            )
+        else:
+            return res[start[0]:stop[0]:step[0], start[1]:stop[1]:step[1], start[2]:stop[2]:step[2]]
 
     def items(self, mask: Optional["ChunkGrid[bool]"] = None) -> Iterator[Tuple[Vec3i, V]]:
+        # Method cache (prevent lookup in loop)
+        __chunk_items = Chunk.items
         if mask is None:
             for i, c in self.chunks.items():
-                yield from c.items()
+                yield from __chunk_items(c)
         else:
+            # Method cache (prevent lookup in loop)
+            __chunk_any_fast = Chunk.any_fast
+            __mask_ensure_chunk_at_index = mask.ensure_chunk_at_index
             for i, c in self.chunks.items():
-                m = mask.ensure_chunk_at_index(i, insert=False)
-                if m.any_fast():
-                    yield from c.items(mask=m)
+                m = __mask_ensure_chunk_at_index(i, insert=False)
+                if __chunk_any_fast(m):
+                    yield from __chunk_items(c, mask=m)
 
     def where(self, mask: Optional["ChunkGrid[bool]"] = None) -> Iterator[Vec3i]:
+        # Method cache (prevent lookup in loop)
+        __chunk_where = Chunk.where
         if mask is None:
             for i, c in self.chunks.items():
-                yield from c.where()
+                yield from __chunk_where(c)
         else:
+            # Method cache (prevent lookup in loop)
+            __chunk_any_fast = Chunk.any_fast
+            __mask_ensure_chunk_at_index = mask.ensure_chunk_at_index
             for i, c in self.chunks.items():
-                m = mask.ensure_chunk_at_index(i, insert=False)
-                if m.any_fast():
-                    yield from c.where(mask=m)
+                m = __mask_ensure_chunk_at_index(i, insert=False)
+                if __chunk_any_fast(m):
+                    yield from __chunk_where(c, mask=m)
 
     def filter(self, other: "ChunkGrid[bool]", fill_value: Optional[V] = None) -> "ChunkGrid[V]":
         """Apply a filter mask to this grid and return the masked values"""
         result = self.copy(empty=True, fill_value=fill_value)
+
+        # Method cache (prevent lookup in loop)
+        __self_chunks_get = self.chunks.get
+        __chunk_any = Chunk.any
+        __result_chunks_insert = result.chunks.insert
+
         for i, o in other.chunks.items():
-            c = self.chunks.get(i, None)
-            if c is not None and c.any():
-                result.chunks.insert(i, c.filter(o, fill_value=fill_value))
+            c = __self_chunks_get(i, None)
+            if c is not None and __chunk_any(c):
+                __result_chunks_insert(i, c.filter(o, fill_value=fill_value))
 
     def __getitem__(self, item):
         if isinstance(item, slice):
-            return self.to_sparse(item)
+            return self.to_dense(item)
         elif isinstance(item, tuple) and len(item) <= 3:
-            return self.to_sparse(*item)
+            return self.to_dense(*item)
         elif isinstance(item, ChunkGrid):
             return self.filter(item)
         elif isinstance(item, np.ndarray):
@@ -723,15 +810,20 @@ class ChunkGrid(Generic[V]):
 
     def get_values(self, pos: Union[Sequence[Vec3i], np.ndarray]) -> np.ndarray:
         """Returns a list of values at the positions"""
+        # Method cache (prevent lookup in loop)
+        __np_argwhere = np.argwhere
+        __self_ensure_chunk_at_index = self.ensure_chunk_at_index
+        __chunk_to_array = Chunk.to_array
+
         pos = np.asarray(pos, dtype=int)
         assert pos.ndim == 2 and pos.shape[1] == 3
         cind, cinv = np.unique(pos // self._chunk_size, axis=0, return_inverse=True)
         result = np.zeros(len(cinv), dtype=self._dtype)
         for n, i in enumerate(cind):
-            pind = np.argwhere(cinv == n).flatten()
+            pind = __np_argwhere(cinv == n).flatten()
             cpos = pos[pind]
-            chunk = self.ensure_chunk_at_index(i, insert=False)
-            result[pind] = chunk.to_array()[tuple(cpos.T)]
+            chunk = __self_ensure_chunk_at_index(i, insert=False)
+            result[pind] = __chunk_to_array(chunk)[tuple(cpos.T)]
         return result
 
     def get_value(self, pos: Vec3i) -> V:
@@ -752,7 +844,7 @@ class ChunkGrid(Generic[V]):
         c.set_or_fill(pos, value)
         return c
 
-    def _set_slices(self, value: Union[V, sparse.SparseArray, np.ndarray],
+    def _set_slices(self, value: Union[V, np.ndarray],
                     x: Union[int, slice, None] = None,
                     y: Union[int, slice, None] = None,
                     z: Union[int, slice, None] = None):
@@ -761,7 +853,7 @@ class ChunkGrid(Generic[V]):
 
         it = PositionIter.require_bounded(x, y, z)
 
-        if isinstance(value, (sparse.SparseArray, np.ndarray)):
+        if isinstance(value, np.ndarray):
             assert value.shape == it.shape
             if self._dtype is not None:
                 value = value.astype(self._dtype)
@@ -789,10 +881,17 @@ class ChunkGrid(Generic[V]):
                 for p in upos:
                     self.set_value(p, value)
 
-    def _set_chunks(self, other: "ChunkGrid", value: Union[V, np.ndarray, Chunk[V]]):
-        assert self._chunk_size == other._chunk_size
-        for o in other.chunks:
-            self.ensure_chunk_at_index(o.index)[o] = value
+    def _set_chunks(self, mask: "ChunkGrid", value: Union[V, np.ndarray, Chunk[V], "ChunkGrid[V]"]):
+        assert self._chunk_size == mask._chunk_size
+        # Method cache (prevent lookup in loop)
+        __grid_ensure_chunk_at_index = ChunkGrid.ensure_chunk_at_index
+        if isinstance(value, ChunkGrid):
+            for m in mask.chunks:
+                val = __grid_ensure_chunk_at_index(value, m.index, insert=False)
+                __grid_ensure_chunk_at_index(self, m.index)[m] = val
+        else:
+            for m in mask.chunks:
+                __grid_ensure_chunk_at_index(self, m.index)[m] = value
 
     def __setitem__(self, key, value):
         if isinstance(key, slice):
@@ -848,23 +947,26 @@ class ChunkGrid(Generic[V]):
 
     def apply(self, func: Callable[[Union[Chunk[V], V]], Union[Chunk[M], M]],
               dtype: Optional[Type[M]] = None, inplace=False, ) -> "ChunkGrid[M]":
-        dtype = dtype or self.dtype
+        dtype = self.__dtype(dtype)
         # Inplace selection
         new_grid = self if inplace else self.copy(empty=True, dtype=dtype)
 
+        # Method cache (prevent lookup in loop)
+        __new_grid_chunks_insert = new_grid.chunks.insert
+
         for i, a in self.chunks.items():
-            new_chunk = func(a.copy())
+            new_chunk = func(a)
             assert isinstance(new_chunk, Chunk)
-            new_grid.chunks.insert(i, new_chunk)
+            __new_grid_chunks_insert(i, new_chunk)
 
         if dtype is not None:
             new_grid._dtype = dtype
-            new_grid._fill_value = dtype(func(self._fill_value))
+            new_grid._fill_value = dtype.type(func(self._fill_value))
         return new_grid
 
     def outer_join(self, rhs, func: Callable[[Union[Chunk[V], V], Union[Chunk[V], V]], Union[Chunk[M], M]],
                    dtype: Optional[Type[M]] = None, inplace=False) -> "ChunkGrid[M]":
-        dtype = dtype or self.dtype
+        dtype = self.__dtype(dtype)
         # Inplace selection
         new_grid = self if inplace else self.copy(empty=True, dtype=dtype)
 
@@ -873,21 +975,28 @@ class ChunkGrid(Generic[V]):
             for c in new_grid.chunks.values():
                 c._dtype = dtype
 
+        # Method cache (prevent lookup in loop)
+        __new_grid_chunks_insert = new_grid.chunks.insert
+
         if isinstance(rhs, ChunkGrid):
             assert new_grid._chunk_size == rhs._chunk_size
             indices = set(self.chunks.keys())
             indices.update(rhs.chunks.keys())
+
+            # Method cache (prevent lookup in loop)
+            _ensure_chunk_at_index = ChunkGrid.ensure_chunk_at_index
+
             for i in indices:
-                a = self.ensure_chunk_at_index(i, insert=False)
-                b = rhs.ensure_chunk_at_index(i, insert=False)
-                new_chunk = func(a.copy(), b)
+                a = _ensure_chunk_at_index(self, i, insert=False)
+                b = _ensure_chunk_at_index(rhs, i, insert=False)
+                new_chunk = func(a, b)
                 assert isinstance(new_chunk, Chunk)
-                new_grid.chunks.insert(i, new_chunk)
+                __new_grid_chunks_insert(i, new_chunk)
         else:
             for i, a in self.chunks.items():
-                new_chunk = func(a.copy(), rhs)
+                new_chunk = func(a, rhs)
                 assert isinstance(new_chunk, Chunk)
-                new_grid.chunks.insert(i, new_chunk)
+                __new_grid_chunks_insert(i, new_chunk)
 
         # Update dtype and if possible the default fill value
         # noinspection DuplicatedCode
@@ -895,12 +1004,12 @@ class ChunkGrid(Generic[V]):
             new_grid._dtype = dtype
             try:
                 if isinstance(rhs, ChunkGrid):
-                    new_grid._fill_value = dtype(func(self._fill_value, rhs._fill_value))
+                    new_grid._fill_value = func(self._fill_value, rhs._fill_value)
                 else:
-                    new_grid._fill_value = dtype(func(self._fill_value, rhs))
+                    new_grid._fill_value = func(self._fill_value, rhs)
             except Exception:
                 try:
-                    new_grid._fill_value = dtype(self._fill_value)
+                    new_grid._fill_value = dtype.type(self._fill_value)
                 except Exception:
                     pass
         return new_grid
@@ -937,13 +1046,13 @@ class ChunkGrid(Generic[V]):
     # Single Operator
 
     def __abs__(self) -> "ChunkGrid[V]":
-        return self.apply(operator.abs)
+        return self.apply(operator.abs, dtype=self._dtype)
 
     def __invert__(self) -> "ChunkGrid[V]":
-        return self.apply(operator.inv)
+        return self.apply(operator.inv, dtype=self._dtype)
 
     def __neg__(self) -> "ChunkGrid[V]":
-        return self.apply(operator.neg)
+        return self.apply(operator.neg, dtype=self._dtype)
 
     abs = __abs__
     invert = __invert__
@@ -952,22 +1061,22 @@ class ChunkGrid(Generic[V]):
     # Logic Operator
 
     def __and__(self, rhs) -> "ChunkGrid[V]":
-        return self.outer_join(rhs, func=operator.and_)
+        return self.outer_join(rhs, func=operator.and_, dtype=self._dtype)
 
     def __or__(self, rhs) -> "ChunkGrid[V]":
-        return self.outer_join(rhs, func=operator.or_)
+        return self.outer_join(rhs, func=operator.or_, dtype=self._dtype)
 
     def __xor__(self, rhs) -> "ChunkGrid[V]":
-        return self.outer_join(rhs, func=operator.xor)
+        return self.outer_join(rhs, func=operator.xor, dtype=self._dtype)
 
     def __iand__(self, rhs) -> "ChunkGrid[V]":
-        return self.outer_join(rhs, func=operator.iand, inplace=True)
+        return self.outer_join(rhs, func=operator.iand, dtype=self._dtype, inplace=True)
 
     def __ior__(self, rhs) -> "ChunkGrid[V]":
-        return self.outer_join(rhs, func=operator.ior, inplace=True)
+        return self.outer_join(rhs, func=operator.ior, dtype=self._dtype, inplace=True)
 
     def __ixor__(self, rhs) -> "ChunkGrid[V]":
-        return self.outer_join(rhs, func=operator.ixor, inplace=True)
+        return self.outer_join(rhs, func=operator.ixor, dtype=self._dtype, inplace=True)
 
     and_ = __and__
     or_ = __or__
@@ -1037,3 +1146,46 @@ class ChunkGrid(Generic[V]):
 
     def sum(self, dtype: Optional[Type[M]] = None) -> M:
         return sum(c.sum() for c in self.chunks)
+
+    def _correlate_filter(self, func, kernel: np.ndarray, fill_value: Optional[M] = None, fast=False,
+                          **kwargs) -> "ChunkGrid[M]":
+        fill_value = fill_value if fill_value is not None else self._fill_value
+        new_grid = ChunkGrid(self._chunk_size, dtype=self._dtype, fill_value=fill_value)
+        for c in self.chunks:
+            if fast and not c.any():
+                continue
+            new_chunk = c._correlate_filter(func, kernel, self, fill_value=fill_value, **kwargs)
+            new_grid.chunks.insert(c.index, new_chunk)
+        new_grid.cleanup(remove=True)
+        return new_grid
+
+    def correlate(self, kernel: np.ndarray, fill_value: Optional[M] = None, fast=False) -> "ChunkGrid[M]":
+        fill_value = fill_value if fill_value is not None else self._fill_value
+        return self._correlate_filter(ndimage.correlate, kernel, fill_value, fast, mode='constant', cval=fill_value)
+
+    def convolve(self, kernel: np.ndarray, fill_value: Optional[M] = None, fast=False) -> "ChunkGrid[M]":
+        fill_value = fill_value if fill_value is not None else self._fill_value
+        return self._correlate_filter(ndimage.convolve, kernel, fill_value, fast, mode='constant', cval=fill_value)
+
+    @classmethod
+    def stack(cls, grids: Sequence["ChunkGrid[V]"], fill_value=None) -> "ChunkGrid[np.ndarray]":
+        assert len(grids) > 0
+        if len(grids) == 1:
+            return grids[0]
+        # Check that grid size matches!
+        chunk_size = grids[0].chunk_size
+        assert all(chunk_size == g.chunk_size for g in grids)
+        indices = set(k for g in grids for k in g.chunks.keys())
+        dtypes = [g.dtype for g in grids]
+        if all(t == dtypes[0] for t in dtypes):
+            assert dtypes[0].base is not np.void
+            dtype = np.dtype((dtypes[0].base, (len(grids),)))
+            fill_value = fill_value if fill_value is not None else np.zeros(1, dtype)
+        else:
+            raise ValueError("Mixed data type grids not supported!")
+
+        new_grid = ChunkGrid(chunk_size, dtype=dtype, fill_value=fill_value)
+        for ind in indices:
+            new_grid.chunks.insert(ind, Chunk._stack([g.ensure_chunk_at_index(ind, insert=False) for g in grids],
+                                                     dtype=dtype, fill_value=fill_value))
+        return new_grid

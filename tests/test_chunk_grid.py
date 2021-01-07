@@ -24,6 +24,54 @@ class TestChunkGridSetter(unittest.TestCase):
         assert result.shape == expected.shape
         self.assertEqual(str(expected), str(result))
 
+    def test_mask_1(self):
+        a = ChunkGrid(2, int, 0)
+
+        mask = ChunkGrid(2, bool, False)
+        mask[1:3, 1:3, 1:3] = True
+        self.assertEqual((4, 4, 4), mask.to_dense().shape)
+        a[mask] = 3
+
+        expected = np.zeros((4, 4, 4), dtype=int)
+        expected[1:3, 1:3, 1:3] = 3
+
+        self.assertEqual(str(expected), str(a.to_dense()))
+
+        tmp = a == 3
+        self.assertEqual(str(mask.to_dense()), str(tmp.to_dense()))
+
+    def test_mask_2(self):
+        a = ChunkGrid(2, bool, False)
+        a[0, 0, 0] = True
+        a.ensure_chunk_at_index((1, 1, 1)).set_fill(True)
+        a.set_value((2, 1, 1), True)
+
+        b = a.astype(np.int8)
+
+        adense = a.to_dense()
+        bdense = b.to_dense()
+        self.assertEqual(adense.shape, bdense.shape)
+        self.assertEqual(str(adense.astype(np.int8)), str(bdense))
+
+        mask = ChunkGrid(2, bool, False)
+        mask.ensure_chunk_at_index((1, 0, 0)).set_fill(True)
+        mask.ensure_chunk_at_index((0, 1, 0)).set_fill(True)
+        mask.ensure_chunk_at_index((0, 0, 1))[0, 0, 0] = True
+
+        b[mask] = 2
+        bdense = b.to_dense()
+
+        expected = np.zeros((4, 4, 4), dtype=np.int8)
+        expected[0, 0, 0] = 1
+        expected[2:4, 2:4, 2:4] = 1
+        expected[2, 1, 1] = 1
+        expected[2:4, 0:2, 0:2] = 2
+        expected[0:2, 2:4, 0:2] = 2
+        expected[0, 0, 2] = 2
+
+        self.assertEqual(expected.shape, bdense.shape)
+        self.assertEqual(str(expected), str(bdense))
+
 
 class TestChunkGridOperator(unittest.TestCase):
 
@@ -47,14 +95,15 @@ class TestChunkGridOperator(unittest.TestCase):
         a.set_value((0, 0, 0), True)
         a.set_value((2, 2, 2), True)
 
-        result = (a == b).to_dense()
-        self.assertIsInstance((a == b), ChunkGrid)
-        self.assertIs((a == b).dtype, np.bool8)
+        comp = a == b
+        self.assertIsInstance(comp, ChunkGrid)
+        self.assertIs(comp.dtype.type, np.bool8)
 
         expected = np.ones((4, 4, 4), dtype=bool)
         expected[0, 0, 0] = False
         expected[2, 2, 2] = False
 
+        result = comp.to_dense()
         assert result.shape == expected.shape
         self.assertEqual(str(expected), str(result))
 
@@ -245,7 +294,7 @@ class TestChunkGridOperator(unittest.TestCase):
         expected[1:-1, 1:-1, -1] = expected1
         expected[1:-1, -1, 1:-1] = 3
 
-        assert actual.shape == expected.shape, f"Shape! \n{actual.shape}\n-------\n{expected.shape}"
+        self.assertEqual(expected.shape, actual.shape)
         # self.assertTrue(np.all(actual == expected), f"Failure! \n{actual}\n-------\n{expected}")
         self.assertEqual(str(expected), str(actual))
 
@@ -336,3 +385,118 @@ class TestChunkGridOperator(unittest.TestCase):
             (np.array([0, 0, 1]), True),
             (np.array([0, 1, 1]), False)
         ]), str(values))
+
+    def test_eq_int(self):
+        a = ChunkGrid(2, int, 0)
+        a.set_value((1, 1, 1), 1)
+        a.ensure_chunk_at_index((1, 1, 1))
+
+        result = a == 0
+        dense = result.to_dense()
+
+        expected = np.ones((4, 4, 4), dtype=bool)
+        expected[1, 1, 1] = False
+
+        self.assertEqual(expected.shape, dense.shape)
+        self.assertEqual(str(expected), str(dense))
+        self.assertTrue(result.any())
+        self.assertFalse(result.all())
+
+
+class TestChunkGridMethods(unittest.TestCase):
+    def test_split(self):
+        a = ChunkGrid(2, int, 0)
+        a[0, 0, 0] = 1
+        a[0, 0, 1] = 2
+        a[0, 1, 0] = 3
+        self.assertEqual(1, len(a.chunks))
+
+        pos = np.array([
+            (0, 0, 0),
+            (0, 0, 1),
+            (0, 1, 0),
+            (0, 1, 1),
+            (1, 0, 0),
+            (1, 0, 1),
+            (1, 1, 0),
+            (1, 1, 1),
+        ])
+
+        b = a.split(2)
+        self.assertEqual(8, len(b.chunks))
+
+        offset = (0, 0, 0)
+        for p in pos:
+            self.assertEqual(1, b.get_value(p + offset))
+
+        offset = (0, 0, 2)
+        for p in pos:
+            self.assertEqual(2, b.get_value(p + offset))
+
+        offset = (0, 2, 0)
+        for p in pos:
+            self.assertEqual(3, b.get_value(p + offset))
+
+        offset = (2, 0, 0)
+        for p in pos:
+            self.assertEqual(0, b.get_value(p + offset))
+
+    def test_getitem(self):
+        CS = 2
+        shape = (CS * 3, CS * 3, CS * 3)
+        soll = np.arange(shape[0] * shape[1] * shape[2]).reshape(shape)
+
+        a = ChunkGrid(CS, int, -1)
+        for u in range(shape[0] // CS):
+            for v in range(shape[1] // CS):
+                for w in range(shape[2] // CS):
+                    x, y, z = u * CS, v * CS, w * CS
+                    index = (u, v, w)
+                    a.ensure_chunk_at_index(index).set_array(soll[x:x + CS, y:y + CS, z:z + CS])
+
+        dense = a.to_dense()
+        self.assertEqual(soll.shape, dense.shape)
+        self.assertEqual(str(soll), str(dense))
+
+        self.assertEqual(str(soll[1: shape[0] - 1, 1: shape[1] - 1, 1: shape[2] - 1]),
+                         str(a[1: shape[0] - 1, 1: shape[1] - 1, 1: shape[2] - 1]))
+
+    def test_getitem_offset(self):
+        CS = 2
+        shape = (CS * 3, CS * 3, CS * 3)
+        soll = np.arange(shape[0] * shape[1] * shape[2]).reshape(shape)
+        offset_chunk = (-1, 0, 1)
+
+        a = ChunkGrid(CS, int, -1)
+        for u in range(shape[0] // CS):
+            for v in range(shape[1] // CS):
+                for w in range(shape[2] // CS):
+                    index = np.add((u, v, w), offset_chunk)
+                    x, y, z = np.multiply((u, v, w), CS)
+                    a.ensure_chunk_at_index(index).set_array(soll[x:x + CS, y:y + CS, z:z + CS])
+
+        offset_voxel = np.multiply(offset_chunk, CS)
+        dense, off = a.to_dense(return_offset=True)
+        self.assertEqual(soll.shape, dense.shape)
+        self.assertEqual(str(soll), str(dense))
+        self.assertEqual(list(offset_voxel), list(off))
+
+        ox, oy, oz = off
+        self.assertEqual(str(soll[1: shape[0] - 1, 1: shape[1] - 1, 1: shape[2] - 1]),
+                         str(a[1 + ox: shape[0] - 1 + ox, 1 + oy: shape[1] - 1 + oy, 1 + oz: shape[2] - 1 + oz]))
+
+    def test_special_dtype(self):
+
+        t = np.dtype((np.int, (3,)))
+        a = ChunkGrid(2, dtype=t, fill_value=np.zeros(3))
+
+        a.set_value((0, 0, 0), np.ones(3))
+        a.set_value((2, 2, 2), np.ones(3))
+        dense = a.to_dense()
+
+        expected = np.zeros((4, 4, 4), dtype=t)
+        expected[0, 0, 0] = 1
+        expected[2, 2, 2] = 1
+
+        self.assertEqual(expected.shape, dense.shape)
+        self.assertEqual(str(expected), str(dense))
