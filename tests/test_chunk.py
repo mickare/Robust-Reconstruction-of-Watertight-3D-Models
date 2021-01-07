@@ -11,7 +11,7 @@ class TestChunkOperator(unittest.TestCase):
         b = Chunk((0, 0, 0), 2, dtype=int, fill_value=0)
 
         res = a == b
-        self.assertIs(res.dtype, np.bool8)
+        self.assertIs(res.dtype.type, np.bool8)
         result = res.to_array()
 
         expected = np.ones((2, 2, 2), dtype=bool)
@@ -28,7 +28,7 @@ class TestChunkOperator(unittest.TestCase):
         b.set_pos((0, 0, 1), 1)
 
         res = a == b
-        self.assertIs(res.dtype, np.bool8)
+        self.assertIs(res.dtype.type, np.bool8)
         result = res.to_array()
 
         expected = np.ones((2, 2, 2), dtype=bool)
@@ -47,7 +47,7 @@ class TestChunkOperator(unittest.TestCase):
         b.set_pos((0, 0, 1), 1)
 
         res = a == b
-        self.assertIs(res.dtype, np.bool8)
+        self.assertIs(res.dtype.type, np.bool8)
         result = res.to_array()
 
         expected = np.ones((2, 2, 2), dtype=bool)

@@ -1,4 +1,4 @@
-from typing import Tuple, Sequence, Iterable, Optional, List
+from typing import Tuple, Sequence, Iterable, Optional, List, Any
 
 import numpy as np
 import plotly.graph_objects as go
@@ -26,7 +26,19 @@ class MeshHelper:
         return np.empty((0, 3), dtype=np.int32), np.empty((0, 3), dtype=np.uint32)
 
     @classmethod
+    def _reduce_zip(cls, a: Sequence[Sequence], b: Sequence[Sequence]) -> Tuple[Tuple, Tuple]:
+        res = tuple(zip(*((u, v) for u, v in zip(a, b) if len(u) != 0 and len(v) != 0)))
+        if res:
+            a, b = res
+            return a, b
+        else:
+            return (), ()
+
+    @classmethod
     def reduce_mesh(cls, vertices: Sequence[np.ndarray], faces: Sequence[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+        if not vertices or not faces:
+            return cls._empty()
+        vertices, faces = cls._reduce_zip(vertices, faces)
         if not vertices or not faces:
             return cls._empty()
         vs = np.vstack(vertices)
@@ -44,9 +56,9 @@ class MeshHelper:
 
     @classmethod
     def _create_mesh_from_deltas(cls, dx: np.ndarray, dy: np.ndarray, dz: np.ndarray):
-        ix = np.nonzero(dx)
-        iy = np.nonzero(dy)
-        iz = np.nonzero(dz)
+        ix = np.argwhere(dx != 0)
+        iy = np.argwhere(dy != 0)
+        iz = np.argwhere(dz != 0)
 
         # Local variable cache
         faces_front = cls._faces_front
@@ -55,18 +67,33 @@ class MeshHelper:
         vert_y = cls._vert_y
         vert_z = cls._vert_z
 
-        vx = [vert_x + f for f, d in zip(np.transpose(ix), dx[ix])]
-        fx = [(faces_front if d >= 0 else faces_back) + (n * 4) for n, d in enumerate(dx[ix])]
+        # # Slow in python
+        # vx = [vert_x + f for f, d in zip(np.transpose(ix), dx[ix])]
+        # fx = [(faces_front if d >= 0 else faces_back) + (n * 4) for n, d in enumerate(dx[ix])]
+        #
+        # vy = [vert_y + f for f, d in zip(np.transpose(iy), dy[iy])]
+        # fy = [(faces_front if d >= 0 else faces_back) + (n * 4) for n, d in enumerate(dy[iy])]
+        #
+        # vz = [vert_z + f for f, d in zip(np.transpose(iz), dz[iz])]
+        # fz = [(faces_front if d >= 0 else faces_back) + (n * 4) for n, d in enumerate(dz[iz])]
 
-        vy = [vert_y + f for f, d in zip(np.transpose(iy), dy[iy])]
-        fy = [(faces_front if d >= 0 else faces_back) + (n * 4) for n, d in enumerate(dy[iy])]
+        # Fast in numpy
+        vx = (ix[:, None] + vert_x).reshape(-1, 3)
+        fx = np.full((len(ix), 2, 3), faces_front)
+        fx[dx[tuple(ix.T)] < 0] = faces_back
+        fx = (fx.T + 4 * np.arange(len(ix))).T.reshape((-1, 3))
 
-        vz = [vert_z + f for f, d in zip(np.transpose(iz), dz[iz])]
-        fz = [(faces_front if d >= 0 else faces_back) + (n * 4) for n, d in enumerate(dz[iz])]
+        vy = (iy[:, None] + vert_y).reshape(-1, 3)
+        fy = np.full((len(iy), 2, 3), faces_front)
+        fy[dy[tuple(iy.T)] < 0] = faces_back
+        fy = (fy.T + 4 * np.arange(len(iy))).T.reshape((-1, 3))
 
-        vertices, faces = cls.reduce_mesh([np.vstack(v) for v in (vx, vy, vz) if v],
-                                          [np.vstack(f) for f in (fx, fy, fz) if f])
-        return vertices, faces
+        vz = (iz[:, None] + vert_z).reshape(-1, 3)
+        fz = np.full((len(iz), 2, 3), faces_front)
+        fz[dz[tuple(iz.T)] < 0] = faces_back
+        fz = (fz.T + 4 * np.arange(len(iz))).T.reshape((-1, 3))
+
+        return cls.reduce_mesh((vx, vy, vz), (fx, fy, fz))
 
     @classmethod
     def extract_voxel_mesh(cls, mask: np.ndarray, neighbors: Sequence[Optional[Chunk]] = None):
@@ -150,7 +177,8 @@ class MeshHelper:
         else:
             chunks = grid.chunks
         if grid.chunks:
-            vertices, faces = zip(*(cls.chunk_to_voxel_mesh(c, parent=grid, **kwargs) for c in chunks))
+            __cls_chunk_to_voxel_mesh = cls.chunk_to_voxel_mesh  # Method cache
+            vertices, faces = zip(*(__cls_chunk_to_voxel_mesh(c, parent=grid, **kwargs) for c in chunks))
             return cls.reduce_mesh(vertices, faces)
         else:  # no chunks
             return cls._empty()

@@ -16,6 +16,10 @@ def to_slice(s: SliceOpt = None) -> slice:
     return slice(s, s + 1)
 
 
+def ceildiv(a, b):
+    return -(-a // b)
+
+
 class ValueIter:
 
     @classmethod
@@ -23,7 +27,7 @@ class ValueIter:
         step = s.step or 1
         start = low if s.start is None else s.start
         stop = high if s.stop is None else s.stop
-        start = max(start, low + start % step)
+        start = max(start, low + (start - low) % step)
         stop = min(stop, high)
         return start, stop, step
 
@@ -72,11 +76,22 @@ class ValueIter:
     def step(self) -> int:
         return self._step
 
+    def __floordiv__(self, other):
+        return ValueIter(
+            slice(
+                self._start // other,
+                ceildiv(self._stop, other),
+                max(1, self._step // other)
+            ),
+            self._low // other,
+            ceildiv(self._high, other)
+        )
+
 
 class PositionIter:
 
     @classmethod
-    def require_bounded(cls, x: SliceOpt, y: SliceOpt, z: SliceOpt):
+    def require_bounded(cls, x: SliceOpt, y: SliceOpt, z: SliceOpt) -> "PositionIter":
         x = to_slice(x)
         y = to_slice(y)
         z = to_slice(z)
@@ -86,7 +101,7 @@ class PositionIter:
         return cls(x, y, z, low=(x.start, y.start, z.start), high=(x.stop, y.stop, z.stop))
 
     @classmethod
-    def empty(cls):
+    def empty(cls) -> "PositionIter":
         return cls(0, 0, 0, np.zeros(3), np.zeros(3))
 
     def __init__(self, x: SliceOpt, y: SliceOpt, z: SliceOpt, low: Vec3i, high: Vec3i):
@@ -152,6 +167,16 @@ class PositionIter:
     @property
     def step(self) -> Vec3i:
         return np.asarray((self._x.step, self._y.step, self._z.step), dtype=int)
+
+    def __floordiv__(self, other):
+        x = self._x // other
+        y = self._y // other
+        z = self._z // other
+        return PositionIter(
+            x.slice, y.slice, z.slice,
+            self._low // other,
+            ceildiv(self._high, other)
+        )
 
 
 class MinMaxCheck:

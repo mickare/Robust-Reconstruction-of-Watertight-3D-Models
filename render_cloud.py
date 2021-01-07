@@ -27,19 +27,14 @@ class CloudRender:
         fig = go.Figure()
         camera = dict(
             up=dict(x=0, y=1, z=0),
-            eye=dict(x=-1, y=-1, z=0.5)
+            eye=dict(x=-1.5, y=0.7, z=1.4)
         )
-        yaxis = dict()
-        zaxis = dict()
         fig.update_layout(
             yaxis=dict(scaleanchor="x", scaleratio=1),
             scene=dict(
                 aspectmode='data',
-                yaxis=yaxis,
-                zaxis=zaxis,
-                xaxis_title='X',
                 camera=camera,
-                dragmode='turntable'
+                dragmode='orbit'
             ),
             scene_camera=camera
         )
