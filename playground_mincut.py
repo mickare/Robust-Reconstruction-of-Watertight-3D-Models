@@ -1,15 +1,18 @@
-from typing import Optional, Tuple, Set, Sequence
+import multiprocessing
+from dataclasses import dataclass
+from typing import Optional, Tuple, Sequence, Union
 
 import maxflow
 import numpy as np
 import tqdm
 from scipy import ndimage
 
+from crust_fix import crust_fix
 from data.chunks import ChunkGrid, Chunk, ChunkFace
 from filters.dilate import dilate
 from filters.fill import flood_fill_at
 from mathlib import Vec3i, Vec3f
-from model.model_pts import FixedPtsModels, PtsModelLoader
+from model.model_pts import FixedPtsModels
 from render_cloud import CloudRender
 from render_voxel import VoxelRender
 from utils import timed
@@ -36,14 +39,14 @@ def scale_model(model: np.ndarray, resolution=64) -> Tuple[np.ndarray, Vec3f, fl
 # =====================================================================
 
 
-def find_empty_point_in_chunk(chunk: Chunk[np.bool8]) -> Optional[Vec3i]:
-    if chunk.is_filled():
-        if chunk.value:
-            return chunk.position_low
+def find_empty_point_in_chunk(mask: Chunk[np.bool8]) -> Optional[Vec3i]:
+    if mask.is_filled():
+        if mask.value:
+            return mask.position_low
     else:
-        pt = np.argwhere(chunk.to_array())
+        pt = np.argwhere(mask.to_array())
         if len(pt) > 0:
-            return pt[0] + chunk.position_low
+            return pt[0] + mask.position_low
     return None
 
 
@@ -54,18 +57,18 @@ def find_empty_fill_position(mask: ChunkGrid[np.bool8]) -> Optional[Vec3i]:
     return None
 
 
-def points_on_chunk_hull(grid: ChunkGrid[np.bool8], count: int = 1) -> Optional[np.ndarray]:
-    if not grid.chunks:
+def points_on_chunk_hull(mask: ChunkGrid[np.bool8], count: int = 1) -> Optional[np.ndarray]:
+    if not mask.chunks:
         return None
 
-    pts_iter = (c.position_low for c in grid.iter_hull() if c.is_filled() and not c.value)
+    pts_iter = (c.position_low for c in mask.iter_hull() if c.is_filled() and not c.value)
     pts = []
     for p, _ in zip(pts_iter, range(count)):
         pts.append(p)
     if pts:
         return np.asarray(pts, dtype=int)
     else:
-        for c in grid.iter_hull():
+        for c in mask.iter_hull():
             if c.any():
                 p = find_empty_point_in_chunk(c)
                 if p is not None:
@@ -84,52 +87,51 @@ def plot_voxels(grid: ChunkGrid[np.bool8], components: ChunkGrid[np.int8]):
     fig.show()
 
 
-def crust_dilation(model: ChunkGrid[np.bool8], max_count=4):
-    last_count = 0
-    ok_count = False
-    crust: ChunkGrid[np.bool8] = model.copy()
-    dilation_step = 0
+def fill_components(crust: ChunkGrid[np.bool8], max_count=4):
+    components = crust.copy(dtype=np.int8, fill_value=0)
+    count = 1
+    target_fill = points_on_chunk_hull(~crust)
+    while target_fill is not None:
+        count += 1
+        if count > max_count:
+            break
+        fill_mask = flood_fill_at(target_fill, mask=components == 0)
+        components[fill_mask] = count
+        # Update for next iteration
+        target_fill = find_empty_fill_position(components == 0)
+    return components, count
 
+
+def crust_dilation(crust: ChunkGrid[np.bool8], max_count=4, max_steps=10):
+    assert max_steps > 0
+    last_count = 0
+    dilation_step = 0
     crusts_all = []
     components_all = []
 
-    for dilation_step in range(30):
-        components = crust.copy(dtype=np.int8)
-        count = 1
-
+    for dilation_step in range(max_steps):
+        print(f"\t\tDilation-Step {dilation_step}")
+        components, count = fill_components(crust, max_count)
         crusts_all.append(crust)
         components_all.append(components)
 
-        # Find fill components
-        target_fill = points_on_chunk_hull(crust)
+        # plot_voxels(components == 0, components)
 
-        while target_fill is not None:
-            count += 1
-            if count > max_count:
-                break
-
-            fill_mask = flood_fill_at(target_fill, mask=components == 0)
-            components[fill_mask] = count
-            # Update for next iteration
-            target_fill = find_empty_fill_position(components == 0)
-
-        plot_voxels(components == 0, components)
-
-        if ok_count and count == 3:
+        if last_count >= count and count <= 3:
             break
         else:
-            if last_count >= count:
-                ok_count = True
             last_count = count
             crust = dilate(crust)
 
     print("\tSteps: ", dilation_step)
-    # crust = crusts_all[max(0, len(crusts_all) - 2)]
-    # components = components_all[max(0, len(components_all) - 2)]
-    crust = crusts_all[-1]
-    components = components_all[-1]
-    crust.cleanup()
-    components.cleanup()
+
+    # Take the crust one step before the inner component vanished.
+    crust = crusts_all[max(0, len(crusts_all) - 2)]
+    components = components_all[max(0, len(components_all) - 2)]
+    # crust = crusts_all[-1]
+    # components = components_all[-1]
+    crust.cleanup(remove=True)
+    components.cleanup(remove=True)
     return crust, components
 
 
@@ -178,13 +180,15 @@ def diffuse(model: ChunkGrid[bool], repeat=1):
 # =====================================================================
 
 
-def mincut(diff: ChunkGrid[float], crust: ChunkGrid[bool], s=4, a=1e-20):
+def mincut(diff: ChunkGrid[float], crust: ChunkGrid[bool], crust_outer: ChunkGrid[np.bool8],
+           crust_inner: ChunkGrid[np.bool8], s=8, a=1e-20, ):
     # weights = ChunkGrid(diff.chunk_size, dtype=float, fill_value=0)
     weights = (diff ** s) + a
-    weights[~crust] = 0
+    weights[~crust] = -1
     weights.cleanup(remove=True)
 
     NodeIndex = Tuple[Vec3i, ChunkFace]
+    CF = ChunkFace
 
     def get_node(pos: Vec3i, face: ChunkFace) -> NodeIndex:
         """Basically forces to have only positive-direction faces"""
@@ -193,7 +197,7 @@ def mincut(diff: ChunkGrid[float], crust: ChunkGrid[bool], s=4, a=1e-20):
         else:
             return tuple(np.add(pos, face.direction, dtype=int)), face.flip()
 
-    voxels = {tuple(p): w for p, w in weights.items(mask=crust)}
+    voxels = {tuple(p): w for p, w in weights.items(mask=crust) if w >= 0}
     nodes = list(set(get_node(p, f) for p in voxels.keys() for f in ChunkFace))
     nodes_index = {f: n for n, f in enumerate(nodes)}
 
@@ -202,34 +206,36 @@ def mincut(diff: ChunkGrid[float], crust: ChunkGrid[bool], s=4, a=1e-20):
     graph = maxflow.Graph[float](nodes_count, nodes_count)
     g_nodes = graph.add_nodes(len(nodes))
 
-    visited: Set[Tuple[Tuple[Vec3i, ChunkFace], Tuple[Vec3i, ChunkFace]]] = set()
+    # visited: Set[Tuple[Tuple[Vec3i, CF], Tuple[Vec3i, CF]]] = set()
     for vPos, w in tqdm.tqdm(voxels.items(), total=len(voxels), desc="Linking Faces"):
-        for f in ChunkFace:  # type: ChunkFace
-            fNode = get_node(vPos, f)
-            fIndex = nodes_index[fNode]
-            for o in f.orthogonal():
-                oNode = get_node(vPos, o)
-                oIndex = nodes_index[oNode]
-                lenVis = len(visited)
-                visited.add((fIndex, oIndex))
-                if len(visited) != lenVis:
-                    graph.add_edge(fIndex, oIndex, w, w)
+        iN = nodes_index[get_node(vPos, CF.NORTH)]
+        iS = nodes_index[get_node(vPos, CF.SOUTH)]
+        iT = nodes_index[get_node(vPos, CF.TOP)]
+        iB = nodes_index[get_node(vPos, CF.BOTTOM)]
+        iE = nodes_index[get_node(vPos, CF.EAST)]
+        iW = nodes_index[get_node(vPos, CF.WEST)]
+        for f, o in [
+            (iN, iE), (iN, iW), (iN, iT), (iN, iB),
+            (iS, iE), (iS, iW), (iS, iT), (iS, iB),
+            (iT, iE), (iT, iW), (iB, iE), (iB, iW)
+        ]:  # type: ChunkFace
+            graph.add_edge(f, o, w, w)
 
     # Source
     for vPos in tqdm.tqdm(list(crust_outer.where()), desc="Linking Source"):
-        assert crust.get_value(vPos)
         for f in ChunkFace:  # type: ChunkFace
             fNode = get_node(tuple(vPos), f)
-            fIndex = nodes_index[fNode]
-            graph.add_tedge(fIndex, 10000, 0)
+            fIndex = nodes_index.get(fNode, None)
+            if fIndex is not None:
+                graph.add_tedge(fIndex, 10000, 0)
 
     # Sink
     for vPos in tqdm.tqdm(list(crust_inner.where()), desc="Linking Sink"):
-        assert crust.get_value(vPos)
         for f in ChunkFace:  # type: ChunkFace
             fNode = get_node(tuple(vPos), f)
-            fIndex = nodes_index[fNode]
-            graph.add_tedge(fIndex, 0, 10000)
+            fIndex = nodes_index.get(fNode, None)
+            if fIndex is not None:
+                graph.add_tedge(fIndex, 0, 10000)
 
     flow = graph.maxflow()
     segments = graph.get_grid_segments(np.arange(nodes_count))
@@ -255,40 +261,52 @@ def mincut(diff: ChunkGrid[float], crust: ChunkGrid[bool], s=4, a=1e-20):
 # Render
 # =====================================================================
 
-CHUNKSIZE = 8
-resolution = 32
+CHUNKSIZE = 32
+resolution = 64
 
 print("Loading model")
 with timed("\tTime: "):
-    # data = FixedPtsModels.bunny()
-    data = PtsModelLoader().load("models/bunny/bunnyData.pts")
+    data = FixedPtsModels.bunny()
+    # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
     data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
     model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
     model[data_pts] = True
     model.pad_chunks(2)
     model.cleanup()
 
-initial_crust = model
+initial_crust: ChunkGrid[np.bool8] = model.copy()
+ren = VoxelRender()
+fig = ren.make_figure()
+fig.add_trace(ren.grid_voxel(initial_crust, opacity=0.1, name='Initial'))
+fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
+fig.show()
 
-for resolution_step in range(0, 2):
+"""
+Only one dilation to find the outer and inner crust at a lower resolution.
+"""
+print("Dilation")
+with timed("\tTime: "):
+    crust, components = crust_dilation(initial_crust, max_steps=100)
+    plot_voxels(components == 0, components)
+    crust_dilate = dilate(crust)
+    outer_fill = components == 2
+    crust_outer = outer_fill & crust_dilate
+    crust_inner = (components != 1) & (components != 2) & crust_dilate
+
+"""
+Approximate Voxel near Medial Axis, by propagating a Normal field inwards.
+Then for each voxel compute a normal cone and mark the voxel as inner component when the cone angle is greater than 90°.
+"""
+
+for resolution_step in range(0, 4):
     print(f"RESOLUTION STEP: {resolution_step}")
-    ren = VoxelRender()
-    fig = ren.make_figure()
-    fig.add_trace(ren.grid_voxel(initial_crust, opacity=0.1, name='Initial'))
-    fig.add_trace(CloudRender().make_scatter(data_pts, name='Model'))
-    fig.show()
-
-    print("Dilation")
-    with timed("\tTime: "):
-        crust, components = crust_dilation(initial_crust)
-        crust_outer = dilate(components == 2) & crust
-        crust_inner = dilate((components != 1) & (components != 2)) & crust
+    crust_inner |= crust_fix(crust, outer_fill, crust_outer, crust_inner, data_pts)
 
     ren = VoxelRender()
     fig = ren.make_figure()
     fig.add_trace(ren.grid_voxel(crust_outer, opacity=0.2, name='Outer'))
     fig.add_trace(ren.grid_voxel(crust_inner, opacity=0.2, name='Inner'))
-    fig.add_trace(CloudRender().make_scatter(data_pts, name='Model'))
+    fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
     fig.show()
 
     print("Diffusion")
@@ -297,8 +315,8 @@ for resolution_step in range(0, 2):
 
     print("MinCut")
     with timed("\tTime: "):
-        segment0, segment1 = mincut(diff, crust)
-        thincrust = segment0 & segment1
+        segment0, segment1 = mincut(diff, crust, crust_outer, crust_inner)
+    thincrust: ChunkGrid[np.bool8] = (segment0 & segment1).astype(np.bool8)
 
     print("Render")
     with timed("\tTime: "):
@@ -317,22 +335,55 @@ for resolution_step in range(0, 2):
         # fig.show()
 
         ren = VoxelRender()
-        fig = ren.make_figure()
-        fig.add_trace(ren.grid_voxel(segment0, opacity=0.1, name='Segment 0'))
-        fig.add_trace(ren.grid_voxel(segment1, opacity=0.1, name='Segment 1'))
-        fig.add_trace(ren.grid_voxel(thincrust, opacity=1.0, name='Join'))
-        fig.add_trace(CloudRender().make_scatter(data_pts, name='Model'))
-        fig.show()
+    fig = ren.make_figure()
+    fig.add_trace(ren.grid_voxel(segment0, opacity=0.1, name='Segment 0'))
+    fig.add_trace(ren.grid_voxel(segment1, opacity=0.1, name='Segment 1'))
+    fig.add_trace(ren.grid_voxel(thincrust, opacity=1.0, name='Join'))
+    fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
+    fig.show()
 
     print("Volumetric refinment")
     with timed("\tTime: "):
-        initial_crust = thincrust.split(2)
-        initial_crust.pad_chunks(1)
-        initial_crust = dilate(initial_crust)
-
+        # Rebuild model
         resolution *= 2
-        data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
-        reinserted = ChunkGrid(initial_crust.chunk_size, np.bool8, fill_value=False)
-        reinserted[data_pts] = True
-        reinserted.pad_chunks(1)
-        initial_crust |= dilate(reinserted, steps=3)
+    data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
+    model = ChunkGrid(initial_crust.chunk_size, np.bool8, fill_value=np.bool8(False))
+    model[data_pts] = np.bool8(True)
+    model.pad_chunks(1)
+    model.cleanup()
+
+    # Build new crust
+    crust = thincrust.split(2) | model
+    crust = dilate(crust, steps=3)
+
+    components, count = fill_components(crust, max_count=2)
+    crust_dilate = dilate(crust)
+    outer_fill = components == 2
+    crust_outer = outer_fill & crust_dilate
+    crust_inner = (components != 1) & (components != 2) & crust_dilate
+
+    # def count_components_by_flooding(mask: ChunkGrid[np.bool8], max_step=100) -> int:
+    #     mask = mask.copy()
+    #     count = 0
+    #     for step in range(1, max_step + 1):
+    #         inv_mask = ~mask
+    #         if step == max_step:
+    #             return np.inf
+    #         pt = find_empty_fill_position(inv_mask)
+    #         if pt is None:
+    #             break
+    #         else:
+    #             count += 1
+    #             mask |= flood_fill_at(pt, inv_mask)
+    #     return count
+
+    #
+    # comp_count = count_components_by_flooding(initial_crust)
+    # inserted = model.copy()
+    # for step in range(0, 5):
+    #     inserted = dilate(inserted)
+    #     initial_crust |= inserted
+    #     c = count_components_by_flooding(initial_crust)
+    #     print(f"Insert {step}: {c} == {comp_count}")
+    #     if c == comp_count:
+    #         break
