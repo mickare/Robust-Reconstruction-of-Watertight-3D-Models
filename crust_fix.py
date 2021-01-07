@@ -131,7 +131,7 @@ def crust_fix(crust: ChunkGrid[np.bool8],
 
     with timed("Normal Correlation: "):
         with multiprocessing.Pool() as pool:
-            worker = NormalCorrelationWorker(crust, kernel, CHUNKSIZE)
+            worker = NormalCorrelationWorker(crust, kernel, CHUNKSIZE*2)
             nfieldx, nfieldy, nfieldz = pool.map(worker.run, [nfieldx, nfieldy, nfieldz])
 
     with timed("Normal Stacking: "):
