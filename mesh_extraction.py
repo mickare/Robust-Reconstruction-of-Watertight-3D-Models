@@ -1,11 +1,13 @@
 import numpy as np
+import multiprocessing
+from model.model_pts import FixedPtsModels
 import enum
 from data.chunks import ChunkGrid, ChunkFace
 from mathlib import Vec3i, Vec3f
 from typing import Tuple, Sequence
 from utils import timed
-from model.model_pts import PtsModelLoader
-from playground_mincut import mincut, scale_model, dilate, crust_dilation, diffuse
+from crust_fix import crust_fix
+from playground_mincut import mincut, scale_model, dilate, crust_dilation, diffuse, fill_components
 
 
 class Edge(enum.IntEnum):
@@ -63,12 +65,16 @@ def make_face(block: np.ndarray, mesh: PolyMesh, segments: np.ndarray, s_opt: Ch
         for i, v in enumerate(block):
             if i == current_voxel:
                 continue
-            edges = get_cut_edges(i, get_nodes(v), segments)
+            nodes = get_nodes(v)
+            if nodes is None:
+                continue
+            edges = get_cut_edges(i, nodes, segments)
             if next_edge in edges:
                 next_voxel = i
                 current_voxel = next_voxel
                 current_edge = next_edge
                 break
+
     assert len(face) >= 3, "Face has only " + str(len(face)) + " vertices."
     mesh.faces.append(face)
 
@@ -86,7 +92,13 @@ def get_starting_edge(start_pos: Vec3i, s_opt: ChunkGrid[np.bool8], segments: np
 
 
 def get_nodes(pos: Vec3i) -> np.ndarray:
-    return np.array([nodes_index[get_node(tuple(pos), ChunkFace(i))] for i in range(6)])
+    indices = []
+    for i in range(6):
+        index = get_node(tuple(pos), ChunkFace(i))
+        if index in nodes_index:
+            indices.append(index)
+    if len(indices) == 6:
+        return np.array([nodes_index[i] for i in indices])
 
 
 def get_cut_edges(block_id, nodes: np.ndarray, segments: np.ndarray) -> tuple:
@@ -110,6 +122,7 @@ def get_first_block(s_opt: ChunkGrid[np.bool8]) -> Vec3i:
                     pos = np.array((pos_x, pos_y, pos_z)) + np.array(c) * s_opt.chunk_size
                     if has_face(pos, s_opt):
                         return pos
+    raise RuntimeError("No starting block can be found.")
 
 
 def get_next_block(start_pos: Vec3i, s_opt: ChunkGrid[np.bool8]) -> Vec3i:
@@ -152,12 +165,15 @@ def get_next_block(start_pos: Vec3i, s_opt: ChunkGrid[np.bool8]) -> Vec3i:
 
 
 def has_face(pos: Vec3i, s_opt: ChunkGrid[np.bool8]):
+    if tuple(pos) == (31, 56, 15):
+        hello = 'hi'  # this block has 4 voxels with cut edges. voxel 0 and 2 share 2 cut edges and 5 and 7 share 2 cut edges.
     block = get_block(pos)
     count = 0
     for i, p in enumerate(block):
         if not s_opt.get_value(p):
             continue
-        if len(get_cut_edges(i, get_nodes(p), segments)) == 2:
+        nodes = get_nodes(p)
+        if nodes is not None and (len(get_cut_edges(i, nodes, segments)) == 2):
             count += 1
     if count >= 3:
         return True
@@ -171,6 +187,11 @@ def get_block(pos: Vec3i):
 
 
 def block_idx_to_edges(idx: int) -> Tuple[Edge, Edge, Edge]:
+    """
+
+    :param idx: Index of the voxel in the 2x2x2 block. Can be 0 to 7.
+    :return: Edges adjacent to the center corner of the block.
+    """
     idx_to_edges = {
         0: (Edge.SOUTH, Edge.BOTTOM, Edge.WEST),
         1: (Edge.SOUTH, Edge.BOTTOM, Edge.EAST),
@@ -218,39 +239,82 @@ def to_voxel(nodeIndex: NodeIndex) -> Sequence[Vec3i]:
     ]
 
 
-CHUNKSIZE = 8
-resolution = 32
+if __name__ == '__main__':
+    CHUNKSIZE = 16
+    resolution = 64
 
-print("Loading model")
-with timed("\tTime: "):
-    # data = FixedPtsModels.bunny()
-    data = PtsModelLoader().load("models/bunny/bunnyData.pts")
-    data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
-    model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
-    model[data_pts] = True
-    model.pad_chunks(2)
-    model.cleanup()
+    with multiprocessing.Pool() as pool:
+        print("Loading model")
+        with timed("\tTime: "):
+            data = FixedPtsModels.bunny()
+            data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
+            model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
+            model[data_pts] = True
+            model.pad_chunks(2)
+            model.cleanup()
 
-initial_crust = model
+        initial_crust: ChunkGrid[np.bool8] = model.copy()
 
-for resolution_step in range(0, 2):
-    print(f"RESOLUTION STEP: {resolution_step}")
+        """
+        Only one dilation to find the outer and inner crust at a lower resolution.
+        """
+        print("Dilation")
+        with timed("\tTime: "):
+            crust, components, dilation_step = crust_dilation(initial_crust, max_steps=CHUNKSIZE * 2)
+            crust_dilate = dilate(crust)
+            outer_fill = components == 2
+            crust_outer = outer_fill & crust_dilate
+            crust_inner = (components != 1) & (components != 2) & crust_dilate
 
-    print("Dilation")
+        """
+        Approximate Voxel near Medial Axis, by propagating a Normal field inwards.
+        Then for each voxel compute a normal cone and mark the voxel as inner component when the cone angle is greater than 90°.
+        """
+
+        for resolution_step in range(0, 1):
+            print(f"RESOLUTION STEP: {resolution_step}")
+
+            print("Crust-Fix")
+            with timed("\tTime: "):
+                crust_inner |= crust_fix(crust, outer_fill, crust_outer, min_distance=dilation_step,
+                                         crust_inner=crust_inner, data_pts=data_pts, pool=pool)
+                crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
+
+            print("Diffusion")
+            with timed("\tTime: "):
+                diff = diffuse(model, repeat=3)
+
+            print("MinCut")
+            with timed("\tTime: "):
+                segment0, segment1, segments, voxels, nodes_index = mincut(diff, crust, crust_outer, crust_inner)
+                thincrust = segment0 & segment1
+
+            print("Dilation")
+            with timed("\tTime: "):
+                crust, components, dilation_step = crust_dilation(initial_crust)
+                crust_outer = dilate(components == 2) & crust
+                crust_inner = dilate((components != 1) & (components != 2)) & crust
+
+            print("Volumetric refinment")
+            with timed("\tTime: "):
+                # Rebuild model
+                resolution *= 2
+                data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
+                model = ChunkGrid(initial_crust.chunk_size, np.bool8, fill_value=np.bool8(False))
+                model[data_pts] = np.bool8(True)
+                model.pad_chunks(1)
+                model.cleanup()
+
+                # Build new crust
+                crust = thincrust.split(2) | model
+                crust = dilate(crust, steps=2)
+
+                components, count = fill_components(crust, max_components=2)
+                crust_dilate = dilate(crust)
+                outer_fill = components == 2
+                crust_outer = outer_fill & crust_dilate
+                crust_inner = (components != 1) & (components != 2) & crust_dilate
+
+    print("Extract mesh")
     with timed("\tTime: "):
-        crust, components = crust_dilation(initial_crust)
-        crust_outer = dilate(components == 2) & crust
-        crust_inner = dilate((components != 1) & (components != 2)) & crust
-
-    print("Diffusion")
-    with timed("\tTime: "):
-        diff = diffuse(model, repeat=3)
-
-    print("MinCut")
-    with timed("\tTime: "):
-        segment0, segment1, segments, voxels, nodes_index = mincut(diff, crust, crust_outer, crust_inner)
-        thincrust = segment0 & segment1
-
-print("Extract mesh")
-with timed("\tTime: "):
-    extract_mesh(segment0, segment1, segments)
+        extract_mesh(segment0, segment1, segments)
