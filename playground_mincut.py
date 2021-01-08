@@ -87,13 +87,13 @@ def plot_voxels(grid: ChunkGrid[np.bool8], components: ChunkGrid[np.int8]):
     fig.show()
 
 
-def fill_components(crust: ChunkGrid[np.bool8], max_count=4):
+def fill_components(crust: ChunkGrid[np.bool8], max_components=4):
     components = crust.copy(dtype=np.int8, fill_value=0)
     count = 1
     target_fill = points_on_chunk_hull(~crust)
     while target_fill is not None:
         count += 1
-        if count > max_count:
+        if count > max_components:
             break
         fill_mask = flood_fill_at(target_fill, mask=components == 0)
         components[fill_mask] = count
@@ -102,25 +102,25 @@ def fill_components(crust: ChunkGrid[np.bool8], max_count=4):
     return components, count
 
 
-def crust_dilation(crust: ChunkGrid[np.bool8], max_count=4, max_steps=10):
+def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, min_steps=3, max_steps=10):
     assert max_steps > 0
-    last_count = 0
+    max_count = 0
     dilation_step = 0
     crusts_all = []
     components_all = []
 
     for dilation_step in range(max_steps):
         print(f"\t\tDilation-Step {dilation_step}")
-        components, count = fill_components(crust, max_count)
+        components, count = fill_components(crust, max_components=max_components)
         crusts_all.append(crust)
         components_all.append(components)
 
         # plot_voxels(components == 0, components)
 
-        if last_count >= count and count <= 3:
+        if dilation_step >= min_steps and max_count >= count and count <= 3:
             break
         else:
-            last_count = count
+            max_count = max(max_count, count)
             crust = dilate(crust)
 
     print("\tSteps: ", dilation_step)
@@ -132,7 +132,7 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_count=4, max_steps=10):
     # components = components_all[-1]
     crust.cleanup(remove=True)
     components.cleanup(remove=True)
-    return crust, components
+    return crust, components, dilation_step
 
 
 # =====================================================================
@@ -262,7 +262,7 @@ def mincut(diff: ChunkGrid[float], crust: ChunkGrid[bool], crust_outer: ChunkGri
 # =====================================================================
 if __name__ == '__main__':
     CHUNKSIZE = 16
-    resolution = 32
+    resolution = 64
 
     with multiprocessing.Pool() as pool:
 
@@ -288,7 +288,7 @@ if __name__ == '__main__':
         """
         print("Dilation")
         with timed("\tTime: "):
-            crust, components = crust_dilation(initial_crust, max_steps=100)
+            crust, components, dilation_step = crust_dilation(initial_crust, max_steps=CHUNKSIZE * 2)
             plot_voxels(components == 0, components)
             crust_dilate = dilate(crust)
             outer_fill = components == 2
@@ -302,7 +302,12 @@ if __name__ == '__main__':
 
         for resolution_step in range(0, 4):
             print(f"RESOLUTION STEP: {resolution_step}")
-            crust_inner |= crust_fix(crust, outer_fill, crust_outer, crust_inner, data_pts, pool=pool)
+
+            print("Crust-Fix")
+            with timed("\tTime: "):
+                crust_inner |= crust_fix(crust, outer_fill, crust_outer, min_distance=dilation_step,
+                                         crust_inner=crust_inner, data_pts=data_pts, pool=pool)
+                crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
 
             ren = VoxelRender()
             fig = ren.make_figure()
@@ -322,7 +327,7 @@ if __name__ == '__main__':
 
             print("Dilation")
             with timed("\tTime: "):
-                crust, components = crust_dilation(initial_crust)
+                crust, components, dilation_step = crust_dilation(initial_crust)
                 crust_outer = dilate(components == 2) & crust
                 crust_inner = dilate((components != 1) & (components != 2)) & crust
 
@@ -348,9 +353,9 @@ if __name__ == '__main__':
 
                 # Build new crust
                 crust = thincrust.split(2) | model
-                crust = dilate(crust, steps=1)
+                crust = dilate(crust, steps=2)
 
-                components, count = fill_components(crust, max_count=2)
+                components, count = fill_components(crust, max_components=2)
                 crust_dilate = dilate(crust)
                 outer_fill = components == 2
                 crust_outer = outer_fill & crust_dilate
