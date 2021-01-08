@@ -46,10 +46,11 @@ class CrustFixWorker:
             x, y, z = pos
             neighbors = merged[x - 1:x + 2, y - 1:y + 2, z - 1:z + 2][neighbor_mask]
             norm = __np_linalg_norm(neighbors, axis=1)
-            if __np_any(norm):
-                neighbors = (neighbors[norm > 0].T / norm[norm > 0]).T
-                if len(neighbors) > 0:
-                    result[n] = __np_any(__np_arccos(neighbors @ neighbors.T) > threshold)
+            cond = norm > 0
+            if __np_any(cond):
+                normalized = (neighbors[cond].T / norm[cond]).T
+                if len(normalized) > 1:
+                    result[n] = __np_any(__np_arccos(normalized @ normalized.T) >= threshold)
         return positions, result
 
 
@@ -85,6 +86,7 @@ def _wrap_pool(*args, pool: Optional[multiprocessing.Pool] = None, **kwargs):
 def crust_fix(crust: ChunkGrid[np.bool8],
               outer_fill: ChunkGrid[np.bool8],
               crust_outer: ChunkGrid[np.bool8],
+              min_distance: int = 1,
               crust_inner: Optional[ChunkGrid[np.bool8]] = None,  # for plotting
               data_pts: Optional[np.ndarray] = None,  # for plotting
               pool: Optional[multiprocessing.Pool] = None
@@ -144,7 +146,7 @@ def crust_fix(crust: ChunkGrid[np.bool8],
         nfieldz.pad_chunks(1)
 
         with timed("Normal Correlation: "):
-            worker = NormalCorrelationWorker(crust, kernel, CHUNKSIZE * 2)
+            worker = NormalCorrelationWorker(crust, kernel, CHUNKSIZE)
             nfieldx, nfieldy, nfieldz = wpool.map(worker.run, [nfieldx, nfieldy, nfieldz])
 
         with timed("Normal Stacking: "):
@@ -202,19 +204,24 @@ def crust_fix(crust: ChunkGrid[np.bool8],
         __np_linalg_norm = np.linalg.norm
         crust_fixed = crust_outer.copy(empty=True)
         worker = CrustFixWorker(merged, neighbor_mask)
-        points, normals = np.array(list(merged.items(mask=crust)), dtype=np.float).transpose((1, 0, 2))
-        points = points[np.linalg.norm(normals, axis=1) >= 1e-15].astype(np.int)
-        # Use numpy to split the work
-        splits = len(points) // min(2 ** 14, merged.chunk_size ** 3)
-        if splits > 2:
-            result = wpool.imap_unordered(worker.run_all, np.array_split(points, splits))
-        else:
-            result = [worker.run_all(points)]
-        for positions, result in result:
-            crust_fixed[positions] = result
+
+        items = tuple(zip(*merged.items(mask=crust)))
+        if items:
+            points, normals = items
+            points = np.array(points, dtype=np.int)
+            normals = np.array(normals, dtype=np.float)
+            points = points[np.linalg.norm(normals, axis=1) >= 1e-20].astype(np.int)
+            # Use numpy to split the work
+            splits = len(points) // min(2 ** 14, merged.chunk_size ** 3)
+            if splits > 2:
+                result = wpool.imap_unordered(worker.run_all, np.array_split(points, splits))
+            else:
+                result = [worker.run_all(points)]
+            for positions, result in result:
+                crust_fixed[positions] = result
 
         # Remove artifacts where the inner and outer crusts are touching
-        crust_fixed &= ~dilate(crust_outer, steps=3)
+        crust_fixed &= ~dilate(crust_outer, steps=max(1, min_distance))
 
         ren = VoxelRender()
         fig = ren.make_figure()
