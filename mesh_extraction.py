@@ -42,13 +42,18 @@ def extract_mesh(segment0: ChunkGrid[np.bool8], segment1: ChunkGrid[np.bool8], s
     block = get_block(get_first_block(s_opt))
     mesh = PolyMesh()
     block_num = 0
+    invalid_faces = 0
     while block is not None:
-        make_face(block, mesh, segments, s_opt)
-        block = get_block(get_next_block(block[0], s_opt))
+        if not make_face(block, mesh, segments, s_opt):
+            invalid_faces += 1
+        next_block_pos = get_next_block(block[0], s_opt)
+        if next_block_pos is not None:
+            block = get_block(next_block_pos)
+        else:
+            break
         block_num += 1
-        if block_num % 1000 == 0:
-            print(block)
-            print(block_num)
+    print('block num ', block_num)
+    print('invalid faces ', invalid_faces)
 
 
 def make_face(block: np.ndarray, mesh: PolyMesh, segments: np.ndarray, s_opt: ChunkGrid[np.bool8]):
@@ -75,8 +80,13 @@ def make_face(block: np.ndarray, mesh: PolyMesh, segments: np.ndarray, s_opt: Ch
                 current_edge = next_edge
                 break
 
-    assert len(face) >= 3, "Face has only " + str(len(face)) + " vertices."
-    mesh.faces.append(face)
+    if len(face) >= 3:
+        mesh.faces.append(face)
+        return True
+    else:
+        return False
+    #assert len(face) >= 3, "Face has only " + str(len(face)) + " vertices."
+    #mesh.faces.append(face)
 
 
 def get_starting_edge(start_pos: Vec3i, s_opt: ChunkGrid[np.bool8], segments: np.ndarray) -> (int, tuple):
