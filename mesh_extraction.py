@@ -8,6 +8,7 @@ from typing import Tuple, Sequence
 from utils import timed
 from crust_fix import crust_fix
 from playground_mincut import mincut, scale_model, dilate, crust_dilation, diffuse, fill_components
+from render_voxel import VoxelRender
 
 
 class Edge(enum.IntEnum):
@@ -36,6 +37,12 @@ class PolyMesh:
             self.num_verts += 1
             return self.num_verts - 1
 
+    def get_vertex_array(self) -> np.array:
+        vertices = np.zeros((len(self.vertices), 3), dtype=float)
+        for v in self.vertices.keys():
+            vertices[self.vertices[v]] = np.array(v)
+        return vertices
+
 
 def extract_mesh(segment0: ChunkGrid[np.bool8], segment1: ChunkGrid[np.bool8], segments: np.ndarray):
     s_opt = segment0 & segment1
@@ -54,6 +61,7 @@ def extract_mesh(segment0: ChunkGrid[np.bool8], segment1: ChunkGrid[np.bool8], s
         block_num += 1
     print('block num ', block_num)
     print('invalid faces ', invalid_faces)
+    return mesh
 
 
 def make_face(block: np.ndarray, mesh: PolyMesh, segments: np.ndarray, s_opt: ChunkGrid[np.bool8]):
@@ -226,8 +234,15 @@ def smoothe():
     pass
 
 
-def make_triangles():
-    pass
+def make_triangles(mesh: PolyMesh):
+    triangles = []
+    for f in mesh.faces:
+        if len(f) == 3:
+            triangles.append(f)
+            continue
+        for i in range(len(f)-2):
+            triangles.append([f[0], f[i+1], f[i + 2]])
+    return np.array(triangles)
 
 
 NodeIndex = Tuple[Vec3i, ChunkFace]
@@ -327,4 +342,9 @@ if __name__ == '__main__':
 
     print("Extract mesh")
     with timed("\tTime: "):
-        extract_mesh(segment0, segment1, segments)
+        mesh = extract_mesh(segment0, segment1, segments)
+        triangles = make_triangles(mesh)
+        ren = VoxelRender()
+        fig = ren.make_figure()
+        fig.add_trace(ren.make_mesh(mesh.get_vertex_array(), triangles, name='Mesh'))
+        fig.show()
