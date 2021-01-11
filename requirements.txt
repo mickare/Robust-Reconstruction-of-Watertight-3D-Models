@@ -1,5 +1,7 @@
 numpy
 scipy
+numba
+numba-scipy
 plyfile
 plotly
 tqdm
