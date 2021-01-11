@@ -1,10 +1,8 @@
-import enum
-import itertools
 import operator
-from typing import Union, Tuple, Iterator, Optional, Generic, TypeVar, Callable, Type, Sequence, Set
+import warnings
+from typing import Union, Tuple, Iterator, Optional, Generic, TypeVar, Callable, Type, Sequence, Set, Any
 
 import numpy as np
-from scipy import ndimage
 
 from data.data_utils import PositionIter
 from data.faces import ChunkFace
@@ -34,8 +32,7 @@ class Chunk(Generic[V]):
         self._index: Vec3i = np.asarray(index, dtype=np.int)
         self._size = size
         self._dtype = np.dtype(dtype)
-        self._fill_value = fill_value
-        self.set_fill(self._fill_value)
+        self._fill_value = self._dtype.base.type(fill_value)  # If this fails, dtype is an unsupported complex type
         self._is_filled = True
         self._value: Union[V, np.ndarray] = self._fill_value
 
@@ -79,6 +76,9 @@ class Chunk(Generic[V]):
     def is_filled(self) -> bool:
         return self._is_filled
 
+    def is_filled_with(self, value: V):
+        return np.all(self._value == value)
+
     def is_array(self) -> bool:
         return not self._is_filled
 
@@ -101,8 +101,14 @@ class Chunk(Generic[V]):
             self.set_pos(pos, value)
 
     def set_fill(self, value: V) -> "Chunk[V]":
-        if not self._dtype.subdtype:
-            value = self._dtype.type(value)
+        dtype = self._dtype
+        if not dtype.subdtype:
+            value = dtype.type(value)
+        else:
+            try:
+                value = dtype.base.type(value)
+            except Exception:
+                pass
         self._value = value
         self._is_filled = True
         return self
@@ -126,7 +132,7 @@ class Chunk(Generic[V]):
     def filter(self, other: "Chunk[bool]", fill_value: Optional[V] = None) -> "Chunk[V]":
         other: Chunk[bool] = other.astype(bool)
         c = self.copy(empty=True, fill_value=fill_value)
-        if other.is_filled() and other._value:
+        if other._is_filled and other._value:
             c.set_fill(self._value)
         else:
             arr = np.full(self.shape, c._fill_value, dtype=self._dtype)
@@ -159,7 +165,7 @@ class Chunk(Generic[V]):
             else:
                 return np.argwhere(self.to_array().astype(bool)) + self.position_low
         elif isinstance(mask, Chunk):
-            if mask.is_filled() and bool(mask.value):
+            if mask._is_filled and mask._value:
                 return self.where(mask=None)
             else:
                 m = mask.to_array()
@@ -172,6 +178,16 @@ class Chunk(Generic[V]):
         if isinstance(item, Chunk):
             return self.filter(item)
         return self.to_array()[item]
+
+    def _set_value(self, value: Union[V, np.ndarray, "Chunk"]):
+        if isinstance(value, Chunk):
+            self._is_filled = value._is_filled
+            self._value = value._value
+        else:
+            if isinstance(value, np.ndarray) and value.ndim >= 3 and value.shape == self.array_shape:
+                self.set_fill(value)
+            else:
+                self.set_fill(value)
 
     def __setitem__(self, key: Union[np.ndarray, "Chunk"], value: Union[V, np.ndarray, "Chunk"]):
         is_value_chunk = isinstance(value, Chunk)
@@ -268,13 +284,9 @@ class Chunk(Generic[V]):
         return self
 
     def all(self) -> bool:
-        if self.is_filled():
-            return bool(self._value)
         return np.all(self._value)
 
     def any(self) -> bool:
-        if self.is_filled():
-            return bool(self._value)
         return np.any(self._value)
 
     def any_fast(self) -> bool:
@@ -282,76 +294,136 @@ class Chunk(Generic[V]):
             return bool(self._value)
         return True
 
+    @classmethod
+    def block_to_array(cls, chunks):
+        chunks = np.asarray(chunks, dtype=np.object)
+        return np.block(
+            [[[chunks[u, v, w].to_array()
+               for w in range(chunks.shape[2])]
+              for v in range(chunks.shape[1])]
+             for u in range(chunks.shape[0])]
+        )
+
     def padding(self, grid: "ChunkGrid[V]", padding: int, corners=False, value: Optional[V] = None) -> np.ndarray:
-        assert 0 <= padding <= self._size
         if padding == 0:
             return self.to_array()
-        if value is None:
-            value = self._fill_value
+        assert padding > 0
+        dtype = self._dtype
+        value = self._dtype.base.type(value) if value is not None else self._fill_value
 
-        arr = self.to_array()
-        pad = padding
-        if arr.ndim > 3:
-            pad = (pad, pad), (pad, pad), (pad, pad), *([(0, 0)] * (arr.ndim - 3))
-        arr = np.pad(self.to_array(), pad, constant_values=value)
+        # Method cache
+        __chunk_to_array = Chunk.to_array
 
-        for face, index in grid.iter_neighbors_indicies(self._index):
-            c = grid.ensure_chunk_at_index(index, insert=False)
-            pad = c.to_array()[face.flip().slice(padding)]
-            arr[face.slice(padding, other=slice(padding, -padding))] = pad
-        if corners:
-            for u, v, w in ChunkFace.corners():
-                s0 = ChunkFace.corner_slice(u, v, w, width=padding)
-                s1 = ChunkFace.corner_slice(u.flip(), v.flip(), w.flip(), width=padding)
-                d = ChunkFace.corner_direction(u, v, w)
-                arr[s0] = grid.ensure_chunk_at_index(d + self._index, insert=False).to_array()[s1]
-        return arr
+        size = self._size
+        chunks = grid.get_neigbors_at(self._index, edges=corners, corners=corners)
+        chunks[1, 1, 1] = self
+
+        def __padding_sliced(s: int) -> Tuple[int, int]:
+            """For chunk padding"""
+            if s < 0:
+                return size - padding, size
+            elif s > 0:
+                return 0, padding
+            else:
+                return 0, size
+
+        def __padding_chunk_sliced(u: int, v: int, w: int) -> np.ndarray:
+            """For chunk padding"""
+            u0, u1 = __padding_sliced(u - 1)
+            v0, v1 = __padding_sliced(v - 1)
+            w0, w1 = __padding_sliced(w - 1)
+            chunk: "Chunk" = chunks[u, v, w]
+            if chunk is None:
+                return np.full((u1 - u0, v1 - v0, w1 - w0), value, dtype=dtype)
+            if chunk._is_filled:
+                return np.full((u1 - u0, v1 - v0, w1 - w0), chunk.value, dtype=dtype)
+            return chunk[u0:u1, v0:v1, w0:w1]
+
+        data = [[[__padding_chunk_sliced(u, v, w)
+                  for w in range(3)]
+                 for v in range(3)]
+                for u in range(3)]
+        if dtype.subdtype:
+            return np.concatenate(
+                [np.concatenate([np.concatenate(v, axis=2) for v in u], axis=1) for u in data], axis=0
+            )
+        else:
+            return np.block(data)
 
     def apply(self, func: Callable[[Union[np.ndarray, V]], Union[np.ndarray, M]],
               dtype: Optional[Type[M]] = None, inplace=False, ) -> "Chunk[M]":
         dtype = self.__dtype(dtype)
-        # Inplace selection
-        c = self if inplace else self.copy()
-        res = func(self._value)
-        if not c._is_filled:
-            assert isinstance(res, np.ndarray)
-            if dtype is not None:
-                res = res.astype(dtype)
-        elif dtype is not None:
-            if not isinstance(res, np.ndarray):
-                res = dtype.type(res)
-        c._value = res
 
-        if dtype is not None:
-            c._dtype = dtype
-            c._fill_value = dtype.type(self._fill_value)
+        # Fill value
+        fill_value = self._fill_value
+        try:
+            fill_value = func(self._fill_value)
+        except Exception as e:
+            handling = np.geterr()['invalid']
+            if handling == 'raise':
+                raise e
+            elif handling == 'ignore':
+                pass
+            else:
+                warnings.warn("Fill value operand", RuntimeWarning, source=e)
+
+        # Inplace selection
+        if inplace:
+            assert self._dtype == dtype
+            c = self
+            c._fill_value = fill_value
+        else:
+            c = self.copy(empty=True, dtype=dtype, fill_value=fill_value)
+
+        # Func on value
+        if self._is_filled:
+            c.set_fill(func(self._value))
+        else:
+            c.set_array(func(self._value))
         return c
 
     def join(self, rhs, func: Callable[[Union[np.ndarray, V], Union[np.ndarray, V]], Union[np.ndarray, M]],
              dtype: Optional[Type[M]] = None, inplace=False, ) -> "Chunk[M]":
         dtype = self.__dtype(dtype)
+
+        rhs_is_chunk = isinstance(rhs, Chunk)
+
+        # Fill value
+        rhs_fill_value = rhs._fill_value if rhs_is_chunk else rhs
+        fill_value = self._fill_value
+        try:
+            fill_value = func(self._fill_value, rhs_fill_value)
+        except Exception as e:
+            handling = np.geterr()['invalid']
+            if handling == 'raise':
+                raise e
+            elif handling == 'ignore':
+                pass
+            else:
+                warnings.warn("Fill value operand", RuntimeWarning, source=e)
+
         # Inplace selection
-        c = self if inplace else self.copy()
-
-        if isinstance(rhs, Chunk):
-            c._is_filled = c._is_filled & rhs._is_filled
-            c._value = func(c._value, rhs._value)
+        if inplace:
+            assert self._dtype == dtype
+            c = self
+            c._fill_value = fill_value
         else:
-            c._is_filled = c._is_filled
-            c._value = func(c._value, rhs)
 
-        if dtype is not None:
-            c._dtype = dtype
-            try:
-                if isinstance(rhs, Chunk):
-                    c._fill_value = func(self._fill_value, rhs._fill_value)
-                else:
-                    c._fill_value = func(self._fill_value, rhs)
-            except Exception:
-                try:
-                    c._fill_value = dtype.type(self._fill_value)
-                except Exception:
-                    pass
+            c = self.copy(empty=True, dtype=dtype, fill_value=fill_value)
+
+        # Func on values
+        if rhs_is_chunk:
+            val = func(self._value, rhs._value)
+            if self._is_filled and rhs._is_filled:
+                c.set_fill(val)
+            else:
+                c.set_array(val)
+        else:
+            val = func(self._value, rhs)
+            if self._is_filled:
+                c.set_fill(func(self._value, rhs))
+            else:
+                c.set_array(func(self._value, rhs))
 
         return c
 
@@ -488,17 +560,6 @@ class Chunk(Generic[V]):
         else:
             return np.sum(self._value, dtype=dtype)
 
-    def _correlate_filter(self, func, kernel: np.ndarray, grid: "ChunkGrid[V]",
-                          fill_value: Optional[M] = None, **kwargs) -> "Chunk[M]":
-        assert kernel.ndim >= 3 and kernel.shape[0] == kernel.shape[1] == kernel.shape[2]
-        fill_value = fill_value if fill_value is not None else self._fill_value
-        pad = np.max(kernel.shape) // 2
-        padded = self.padding(grid, pad, corners=True, value=fill_value)
-        tmp = func(padded, kernel, **kwargs)
-        arr = tmp[pad:-pad, pad:-pad, pad:-pad]
-        assert arr.shape == self.array_shape
-        return Chunk(self._index, self._size, self._dtype, fill_value=fill_value).set_array(arr)
-
     @classmethod
     def _stack(cls, chunks: Sequence["Chunk[V]"], dtype: np.dtype, fill_value=None) -> "Chunk[np.ndarray]":
         assert dtype.shape
@@ -516,12 +577,11 @@ class Chunk(Generic[V]):
 class ChunkGrid(Generic[V]):
     __slots__ = ('_chunk_size', '_dtype', '_fill_value', 'chunks')
 
-    def __init__(self, chunk_size: int, dtype: Optional[Union[np.dtype, Type[V]]] = None,
-                 fill_value: Optional[V] = None):
+    def __init__(self, chunk_size: int, dtype: Optional[Union[np.dtype, Type[V]]] = None, fill_value: Optional = None):
         assert chunk_size > 0
         self._chunk_size = chunk_size
         self._dtype = np.dtype(dtype)
-        self._fill_value = fill_value
+        self._fill_value = self._dtype.base.type(fill_value)  # If this fails, dtype is an unsupported complex type
         self.chunks: IndexDict[Chunk[V]] = IndexDict()
 
     @property
@@ -569,9 +629,17 @@ class ChunkGrid(Generic[V]):
 
     def copy(self, empty=False, dtype: Optional[Union[np.dtype, Type[M]]] = None,
              fill_value: Optional[M] = None) -> "ChunkGrid[M]":
+        # Get type
         dtype = self.__dtype(dtype)
+        # Get fill value
         fill_value = self._fill_value if fill_value is None else fill_value
+        try:
+            fill_value = dtype.base.type(fill_value)
+        except Exception:
+            pass
+        # Create new grid
         new_grid = ChunkGrid(self._chunk_size, dtype, fill_value)
+        # Fill if wanted
         if not empty:
             # Method cache (prevent lookup in loop)
             __new_grid_chunks_insert = new_grid.chunks.insert
@@ -613,14 +681,14 @@ class ChunkGrid(Generic[V]):
         return np.full(self.chunk_shape, default, dtype=np.bool)
 
     @classmethod
-    def iter_neighbors_indicies(cls, index: ChunkIndex) -> Iterator[Tuple[ChunkFace, Vec3i]]:
-        yield from ((f, np.add(index, f.direction)) for f in ChunkFace)
+    def iter_neighbors_indices(cls, index: ChunkIndex) -> Iterator[Tuple[ChunkFace, Vec3i]]:
+        yield from ((f, np.add(index, f.direction())) for f in ChunkFace)
 
     def iter_neighbors(self, index: ChunkIndex, flatten=False) -> Iterator[Tuple[ChunkFace, Optional["Chunk"]]]:
         if flatten:
             yield from ((f, c) for f, c in self.iter_neighbors(index, False) if c is not None)
         else:
-            yield from ((f, self.chunks.get(i, None)) for f, i in self.iter_neighbors_indicies(index))
+            yield from ((f, self.chunks.get(i, None)) for f, i in self.iter_neighbors_indices(index))
 
     def __bool__(self):
         raise ValueError(f"The truth value of {__class__} is ambiguous. "
@@ -649,7 +717,7 @@ class ChunkGrid(Generic[V]):
         index_min, index_max = self.chunks.minmax()
         pos_min = index_min * cs
         pos_max = (index_max + 1) * cs
-        voxel_it = PositionIter(x, y, z, low=pos_min, high=pos_max)
+        voxel_it = PositionIter(x, y, z, low=pos_min, high=pos_max, clip=False)
 
         chunk_it = voxel_it // cs
         chunk_min = np.asarray(chunk_it.start)
@@ -795,6 +863,8 @@ class ChunkGrid(Generic[V]):
             if not pos:
                 return  # No Op
         pos = np.asarray(pos, dtype=int)
+        if len(pos) == 0:
+            return  # No Op
         if pos.shape == (3,):
             self.set_value(pos, value)
         else:
@@ -813,12 +883,39 @@ class ChunkGrid(Generic[V]):
         # Method cache (prevent lookup in loop)
         __grid_ensure_chunk_at_index = ChunkGrid.ensure_chunk_at_index
         if isinstance(value, ChunkGrid):
-            for m in mask.chunks:
-                val = __grid_ensure_chunk_at_index(value, m.index, insert=False)
-                __grid_ensure_chunk_at_index(self, m.index)[m] = val
+
+            indices = set(mask.chunks.keys())
+            if mask._fill_value:
+                indices.update(self.chunks.keys())
+                indices.update(value.chunks.keys())
+
+            for index in indices:
+                m = mask.ensure_chunk_at_index(index, insert=False)
+                val = __grid_ensure_chunk_at_index(value, index, insert=False)
+                __grid_ensure_chunk_at_index(self, index)[m] = val
+
+            # Set fill value
+            if mask._fill_value:
+                self._fill_value = self._dtype.base.type(value._fill_value)
         else:
-            for m in mask.chunks:
-                __grid_ensure_chunk_at_index(self, m.index)[m] = value
+            indices = set(mask.chunks.keys())
+            if mask._fill_value:
+                indices.update(self.chunks.keys())
+
+            for index in indices:
+                m = mask.ensure_chunk_at_index(index, insert=False)
+                __grid_ensure_chunk_at_index(self, index)[m] = value
+
+            # Set fill value
+            if mask._fill_value:
+                if isinstance(value, Chunk):
+                    self._fill_value = value._fill_value
+                else:
+                    if isinstance(value, np.ndarray):
+                        assert value.dtype == self._dtype
+                        self._fill_value = value
+                    else:
+                        self._fill_value = self._dtype.base.type(value)
 
     def __setitem__(self, key, value):
         if isinstance(key, slice):
@@ -837,7 +934,7 @@ class ChunkGrid(Generic[V]):
             chunk.cleanup()
         if remove:
             for chunk in list(self.chunks):
-                if not chunk.any():
+                if chunk.is_filled_with(self._fill_value):
                     del self.chunks[chunk.index]
         return self
 
@@ -845,7 +942,7 @@ class ChunkGrid(Generic[V]):
         visited: Set[ChunkIndex] = set()
         for s in range(0, width):
             extra: Set[ChunkIndex] = set(tuple(n) for i in self.chunks.keys()
-                                         for f, n in self.iter_neighbors_indicies(i))
+                                         for f, n in self.iter_neighbors_indices(i))
             extra = extra.difference(visited)
             for e in extra:
                 self.ensure_chunk_at_index(e)
@@ -870,6 +967,65 @@ class ChunkGrid(Generic[V]):
                             yield c
                             break
 
+    def get_neigbors_at(self, index: ChunkIndex, neighbors=True, edges=True, corners=True, insert=False,
+                        ensure=True):  # Method cache
+        __face_direction = ChunkFace.direction
+
+        if ensure:
+            def getter(index):
+                return self.ensure_chunk_at_index(index, insert=insert)
+        else:
+            def getter(index):
+                return self.chunks.get(index, default=None)
+
+        chunks = np.full((3, 3, 3), None, dtype=np.ndarray)
+        chunks[1, 1, 1] = self
+        if neighbors:
+            for face, index in self.iter_neighbors_indices(index):
+                u, v, w = __face_direction(face) + 1
+                chunks[u, v, w] = getter(index)
+        if edges:
+            # Add edges
+            for a, b in ChunkFace.edges():
+                d = __face_direction(a) + __face_direction(b)
+                u, v, w = d + 1
+                chunks[u, v, w] = getter(index + d)
+        if corners:
+            # Add corners
+            for a, b, c in ChunkFace.corners():
+                d = __face_direction(a) + __face_direction(b) + __face_direction(c)
+                u, v, w = d + 1
+                chunks[u, v, w] = getter(index + d)
+        return chunks
+
+    def get_block_at(self, index: ChunkIndex, shape: Tuple[int, int, int], *, offset: Optional[Vec3i] = None,
+                     neighbors=True, edges=True, corners=True, ensure=True, insert=False):
+        assert len(shape) == 3
+
+        # Method cache
+        __face_direction = ChunkFace.direction
+
+        if ensure:
+            def getter(index):
+                return self.ensure_chunk_at_index(index, insert=insert)
+        else:
+            def getter(index):
+                return self.chunks.get(index, default=None)
+
+        chunks = np.full(shape, None, dtype=np.object)
+        offset = np.array(shape) // 2 if offset is None else np.asarray(offset, dtype=np.int)
+        assert offset.shape == (3,)
+        chunks[tuple(offset)] = self
+
+        start = index - offset
+        stop = start + shape
+        for u, x in enumerate(range(start[0], stop[0])):
+            for v, y in enumerate(range(start[1], stop[1])):
+                for w, z in enumerate(range(start[2], stop[2])):
+                    chunks[u, v, w] = getter((x, y, z))
+
+        return chunks
+
     # Operators
 
     def apply(self, func: Callable[[Union[Chunk[V], V]], Union[Chunk[M], M]],
@@ -877,6 +1033,7 @@ class ChunkGrid(Generic[V]):
         dtype = self.__dtype(dtype)
         # Inplace selection
         new_grid = self if inplace else self.copy(empty=True, dtype=dtype)
+        new_grid._fill_value = func(self._fill_value)
 
         # Method cache (prevent lookup in loop)
         __new_grid_chunks_insert = new_grid.chunks.insert
@@ -888,24 +1045,34 @@ class ChunkGrid(Generic[V]):
 
         if dtype is not None:
             new_grid._dtype = dtype
-            new_grid._fill_value = dtype.type(func(self._fill_value))
+            new_grid._fill_value = dtype.type(new_grid._fill_value)
         return new_grid
 
     def outer_join(self, rhs, func: Callable[[Union[Chunk[V], V], Union[Chunk[V], V]], Union[Chunk[M], M]],
                    dtype: Optional[Type[M]] = None, inplace=False) -> "ChunkGrid[M]":
         dtype = self.__dtype(dtype)
-        # Inplace selection
-        new_grid = self if inplace else self.copy(empty=True, dtype=dtype)
 
+        rhs_is_grid = isinstance(rhs, ChunkGrid)
+
+        fill_value = self._fill_value
+        rhs_fill_value = rhs._fill_value if rhs_is_grid else rhs
+        try:
+            fill_value = dtype.base.type(func(fill_value, rhs_fill_value))
+        except Exception:
+            pass
+
+        # Inplace selection
         if inplace:
-            # Update data type
-            for c in new_grid.chunks.values():
-                c._dtype = dtype
+            assert dtype == self._dtype  # Inplace must retain type
+            new_grid = self
+            new_grid._fill_value = fill_value
+        else:
+            new_grid = self.copy(empty=True, dtype=dtype, fill_value=fill_value)
 
         # Method cache (prevent lookup in loop)
         __new_grid_chunks_insert = new_grid.chunks.insert
 
-        if isinstance(rhs, ChunkGrid):
+        if rhs_is_grid:
             assert new_grid._chunk_size == rhs._chunk_size
             indices = set(self.chunks.keys())
             indices.update(rhs.chunks.keys())
@@ -925,20 +1092,6 @@ class ChunkGrid(Generic[V]):
                 assert isinstance(new_chunk, Chunk)
                 __new_grid_chunks_insert(i, new_chunk)
 
-        # Update dtype and if possible the default fill value
-        # noinspection DuplicatedCode
-        if dtype is not None:
-            new_grid._dtype = dtype
-            try:
-                if isinstance(rhs, ChunkGrid):
-                    new_grid._fill_value = func(self._fill_value, rhs._fill_value)
-                else:
-                    new_grid._fill_value = func(self._fill_value, rhs)
-            except Exception:
-                try:
-                    new_grid._fill_value = dtype.type(self._fill_value)
-                except Exception:
-                    pass
         return new_grid
 
     # Comparison Operator
@@ -1074,26 +1227,6 @@ class ChunkGrid(Generic[V]):
     def sum(self, dtype: Optional[Type[M]] = None) -> M:
         return sum(c.sum() for c in self.chunks)
 
-    def _correlate_filter(self, func, kernel: np.ndarray, fill_value: Optional[M] = None, fast=False,
-                          **kwargs) -> "ChunkGrid[M]":
-        fill_value = fill_value if fill_value is not None else self._fill_value
-        new_grid = ChunkGrid(self._chunk_size, dtype=self._dtype, fill_value=fill_value)
-        for c in self.chunks:
-            if fast and not c.any():
-                continue
-            new_chunk = c._correlate_filter(func, kernel, self, fill_value=fill_value, **kwargs)
-            new_grid.chunks.insert(c.index, new_chunk)
-        new_grid.cleanup(remove=True)
-        return new_grid
-
-    def correlate(self, kernel: np.ndarray, fill_value: Optional[M] = None, fast=False) -> "ChunkGrid[M]":
-        fill_value = fill_value if fill_value is not None else self._fill_value
-        return self._correlate_filter(ndimage.correlate, kernel, fill_value, fast, mode='constant', cval=fill_value)
-
-    def convolve(self, kernel: np.ndarray, fill_value: Optional[M] = None, fast=False) -> "ChunkGrid[M]":
-        fill_value = fill_value if fill_value is not None else self._fill_value
-        return self._correlate_filter(ndimage.convolve, kernel, fill_value, fast, mode='constant', cval=fill_value)
-
     @classmethod
     def stack(cls, grids: Sequence["ChunkGrid[V]"], fill_value=None) -> "ChunkGrid[np.ndarray]":
         assert len(grids) > 0
@@ -1116,3 +1249,38 @@ class ChunkGrid(Generic[V]):
             new_grid.chunks.insert(ind, Chunk._stack([g.ensure_chunk_at_index(ind, insert=False) for g in grids],
                                                      dtype=dtype, fill_value=fill_value))
         return new_grid
+
+    def set_block_at(self, index: ChunkIndex, data: np.ndarray,
+                     op: Optional[Callable[[Chunk, np.ndarray], Any]] = None, replace: bool = True):
+        index_arr = np.asarray(index, dtype=int)
+        size = self.chunk_size
+        data_shape = np.array(data.shape, dtype=int)
+        assert np.all(data_shape % size == 0)
+        block_shape = tuple(data_shape // size)
+        block_offset = np.array(block_shape, dtype=int) // 2
+
+        if op is None:
+            op = Chunk.set_array
+
+        if replace:
+            # dst = self.get_block_at(index, block_shape, ensure=True, insert=True)
+            for u in range(block_shape[0]):
+                for v in range(block_shape[1]):
+                    for w in range(block_shape[2]):
+                        s0 = np.array((u, v, w)) * size
+                        s1 = s0 + size
+                        chunk_index = index_arr - block_offset + (u, v, w)
+                        chunk = self.ensure_chunk_at_index(chunk_index)
+                        op(chunk, data[s0[0]:s1[0], s0[1]:s1[1], s0[2]:s1[2]])
+
+        else:
+            for u in range(block_shape[0]):
+                for v in range(block_shape[1]):
+                    for w in range(block_shape[2]):
+                        chunk_index = index_arr - block_offset + (u, v, w)
+                        chunk = self.chunks.get(chunk_index, None)
+                        if chunk is None:
+                            s0 = np.array((u, v, w)) * size
+                            s1 = s0 + size
+                            chunk = self.ensure_chunk_at_index(chunk_index)
+                            op(chunk, data[s0[0]:s1[0], s0[1]:s1[1], s0[2]:s1[2]])

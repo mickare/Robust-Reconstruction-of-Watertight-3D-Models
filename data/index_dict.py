@@ -123,11 +123,12 @@ class IndexDict(Generic[T]):
 
     def create_if_absent(self, index: Index, factory: Callable[[Index], T], *, insert=True) -> T:
         index = self.index(index)
-        c = self._data.get(index, None)
+        _data = self._data
+        c = _data.get(index, None)
         if c is None:
             c = factory(index)
             if insert:
-                self._data[index] = c
+                _data[index] = c
                 self._minmax.add(index)
         return c
 

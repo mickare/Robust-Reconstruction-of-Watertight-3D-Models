@@ -23,19 +23,24 @@ def ceildiv(a, b):
 class ValueIter:
 
     @classmethod
-    def _indices(cls, s: slice, low: int, high: int) -> Tuple[int, int, int]:
+    def _indices(cls, s: slice, low: int, high: int, clip=True) -> Tuple[int, int, int]:
         step = s.step or 1
         start = low if s.start is None else s.start
         stop = high if s.stop is None else s.stop
-        start = max(start, low + (start - low) % step)
-        stop = min(stop, high)
+        if clip:
+            start = max(start, low + (start - low) % step)
+            stop = min(stop, high)
+        else:
+            start = start
+            stop = stop
         return start, stop, step
 
-    def __init__(self, s: SliceOpt, low: int, high: int):
+    def __init__(self, s: SliceOpt, low: int, high: int, clip=True):
         self._low = int(low)
         self._high = int(high)
         self._slice = to_slice(s)
-        self._start, self._stop, self._step = self._indices(self._slice, low, high)
+        self._start, self._stop, self._step = self._indices(self._slice, low, high, clip)
+        self.clip = clip
 
     def range(self) -> range:
         return range(self._start, self._stop, self._step)
@@ -84,7 +89,8 @@ class ValueIter:
                 max(1, self._step // other)
             ),
             self._low // other,
-            ceildiv(self._high, other)
+            ceildiv(self._high, other),
+            self.clip
         )
 
 
@@ -104,13 +110,14 @@ class PositionIter:
     def empty(cls) -> "PositionIter":
         return cls(0, 0, 0, np.zeros(3), np.zeros(3))
 
-    def __init__(self, x: SliceOpt, y: SliceOpt, z: SliceOpt, low: Vec3i, high: Vec3i):
+    def __init__(self, x: SliceOpt, y: SliceOpt, z: SliceOpt, low: Vec3i, high: Vec3i, clip=True):
         self._low = np.asarray(low, dtype=int)
         self._high = np.asarray(high, dtype=int)
         assert self._low.shape == (3,) and self._high.shape == (3,)
-        self._x = ValueIter(x, self._low[0], self._high[0])
-        self._y = ValueIter(y, self._low[1], self._high[1])
-        self._z = ValueIter(z, self._low[2], self._high[2])
+        self._x = ValueIter(x, self._low[0], self._high[0], clip)
+        self._y = ValueIter(y, self._low[1], self._high[1], clip)
+        self._z = ValueIter(z, self._low[2], self._high[2], clip)
+        self.clip = clip
 
     def __contains__(self, item: Vec3i) -> bool:
         if len(item) == 3:
@@ -175,7 +182,8 @@ class PositionIter:
         return PositionIter(
             x.slice, y.slice, z.slice,
             self._low // other,
-            ceildiv(self._high, other)
+            ceildiv(self._high, other),
+            self.clip
         )
 
 
