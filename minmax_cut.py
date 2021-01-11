@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from queue import PriorityQueue
 from typing import Set, Tuple, Optional, TypeVar
 
-from data.chunks import ChunkGrid, ChunkFace
+from data.chunks import ChunkGrid
+from data.faces import ChunkFace
 from make_crust import scale_model, get_crust, get_diffusion
 from mathlib import Vec3i
 from model.model_pts import FixedPtsModels
@@ -52,7 +53,7 @@ def minmax_cut(weights: ChunkGrid[float], mask: ChunkGrid[bool], outer: ChunkGri
         weight = weights.get_value(entry.pos)
         for f in ChunkFace:
             if f != entry.face:
-                next_pos = entry.pos + f.direction
+                next_pos = entry.pos + f.direction()
                 if tuple(next_pos) not in visited and mask.get_value(next_pos):
                     if f.flip() == entry.face:
                         w = 2 * weight
