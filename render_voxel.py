@@ -228,7 +228,7 @@ class VoxelRender:
         x, y, z = np.transpose(data)
         return x, y, z
 
-    def make_figure(self, **kwargs) -> go.Figure:
+    def make_figure(self, title: Optional[str] = None, **kwargs) -> go.Figure:
         fig = go.Figure(**kwargs)
         camera = dict(
             up=dict(x=0, y=1, z=0),
@@ -241,7 +241,8 @@ class VoxelRender:
                 camera=camera,
                 dragmode='orbit'
             ),
-            scene_camera=camera
+            scene_camera=camera,
+            title=title
         )
         return fig
 

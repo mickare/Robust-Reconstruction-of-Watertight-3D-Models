@@ -23,8 +23,8 @@ class CloudRender:
         x, y, z = self._unwrap(pts)
         return go.Scatter3d(x=x, y=y, z=z, **kwargs)
 
-    def make_figure(self, **kwargs) -> go.Figure:
-        fig = go.Figure()
+    def make_figure(self, title=None, **kwargs) -> go.Figure:
+        fig = go.Figure(**kwargs)
         camera = dict(
             up=dict(x=0, y=1, z=0),
             eye=dict(x=-1.5, y=0.7, z=1.4)
@@ -36,7 +36,8 @@ class CloudRender:
                 camera=camera,
                 dragmode='orbit'
             ),
-            scene_camera=camera
+            scene_camera=camera,
+            title=title
         )
         return fig
 
