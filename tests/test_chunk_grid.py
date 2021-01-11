@@ -4,7 +4,8 @@ from typing import Type
 
 import numpy as np
 
-from data.chunks import ChunkGrid, ChunkFace
+from data.chunks import ChunkGrid
+from data.faces import ChunkFace
 
 
 class TestChunkGridSetter(unittest.TestCase):
@@ -366,7 +367,12 @@ class TestChunkGridOperator(unittest.TestCase):
         b.set_value((1, 1, 1), 1)
 
         tmp = (b == 1)
+        self.assertEqual(1, len(tmp.chunks))
+        self.assertFalse(next(iter(tmp.chunks)).is_filled())
+
         result = tmp & a
+        self.assertEqual(1, len(result.chunks))
+        self.assertFalse(next(iter(result.chunks)).is_filled())
 
         expected_tmp = np.zeros((2, 2, 2), dtype=bool)
         expected_tmp[0, 0, 1] = True
@@ -484,6 +490,17 @@ class TestChunkGridMethods(unittest.TestCase):
         ox, oy, oz = off
         self.assertEqual(str(soll[1: shape[0] - 1, 1: shape[1] - 1, 1: shape[2] - 1]),
                          str(a[1 + ox: shape[0] - 1 + ox, 1 + oy: shape[1] - 1 + oy, 1 + oz: shape[2] - 1 + oz]))
+
+    def test__getitem_empty(self):
+        a = ChunkGrid(2, int, -1)
+        a.set_or_fill((0, 0, 0), 1)
+
+        res = a[-1:1, -1:1, -1:1]
+
+        expected = np.full((2, 2, 2), -1)
+        expected[1, 1, 1] = 1
+
+        self.assertEqual(str(expected), str(res))
 
     def test_special_dtype(self):
 
