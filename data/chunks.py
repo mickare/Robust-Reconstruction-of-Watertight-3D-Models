@@ -604,6 +604,12 @@ class ChunkGrid(Generic[V]):
     def fill_value(self) -> V:
         return self._fill_value
 
+    @fill_value.setter
+    def fill_value(self, value: V):
+        self._fill_value = value
+        for c in self.chunks:
+            c._fill_value = value
+
     def size(self) -> Vec3i:
         index_min, index_max = self.chunks.minmax()
         return (index_max - index_min + 1) * self._chunk_size
@@ -947,6 +953,7 @@ class ChunkGrid(Generic[V]):
             for e in extra:
                 self.ensure_chunk_at_index(e)
             visited.update(extra)
+        return self
 
     def iter_hull(self) -> Iterator[Chunk[V]]:
         """Iter some of the outer chunks that represent the hull around all chunks"""

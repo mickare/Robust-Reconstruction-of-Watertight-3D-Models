@@ -4,6 +4,7 @@ import numpy as np
 from scipy import ndimage
 
 from data.chunks import ChunkGrid, Chunk
+from data.faces import ChunkFace
 
 bool_t = Union[bool, np.bool8]
 
@@ -18,12 +19,14 @@ def dilate_no_mask(image: ChunkGrid[bool_t], structure: Optional[np.ndarray] = N
     __chunk_padding = Chunk.padding
     __chunk_set_array = Chunk.set_array
 
+    __pad_slice = slice(1, -1)
+
     result = image
     for step in range(steps):
         # Temporary result between each step
         tmp = result.copy(empty=True)
         # Dilate inner chunk
-        result.pad_chunks(1)
+        # result.pad_chunks(1)
         for r in result.chunks:
             if r.is_filled() and r.value:  # Skip, nothing to do
                 continue
@@ -38,9 +41,19 @@ def dilate_no_mask(image: ChunkGrid[bool_t], structure: Optional[np.ndarray] = N
             # Copy result to tmp
             c = __grid_ensure_chunk_at_index(tmp, r.index)
             __chunk_set_array(c, dil[1:-1, 1:-1, 1:-1])
+
+            # Propagate to the next chunks
+            for f in ChunkFace:  # type: ChunkFace
+                s = dil[f.slice(other=__pad_slice)]
+                if np.any(s):
+                    neighbor: Chunk = __grid_ensure_chunk_at_index(tmp, f.direction() + r.index)
+                    arr = neighbor.to_array()
+                    arr[f.flip().slice()] |= s
+                    neighbor.set_array(arr)
+
         # Set result
         result = tmp
-        result.cleanup(remove=True)
+    result.cleanup(remove=True)
     return result
 
 

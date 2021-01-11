@@ -306,20 +306,20 @@ if __name__ == '__main__':
         assert crust_inner._fill_value == False
 
     """
-    Approximate Voxel near Medial Axis, by propagating a Normal field inwards.
-    Then for each voxel compute a normal cone and mark the voxel as inner component when the cone angle is greater than 90°.
-    """
-    print("Crust-Fix")
-    with timed("\tTime: "):
-        crust_inner |= crust_fix(crust, outer_fill, crust_outer, min_distance=dilation_step,
-                                 crust_inner=crust_inner, data_pts=data_pts)
-        # crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
-
-    """
     Increase resolution and make the mesh approximation finer
     """
     for resolution_step in range(0, 4):
         print(f"RESOLUTION STEP: {resolution_step}")
+
+        """
+        Approximate Voxel near Medial Axis, by propagating a Normal field inwards.
+        Then for each voxel compute a normal cone and mark the voxel as inner component when the cone angle is greater than 90°.
+        """
+        print("Crust-Fix")
+        with timed("\tTime: "):
+            crust_inner |= crust_fix(crust, outer_fill, crust_outer, crust_inner,
+                                     min_distance=dilation_step, data_pts=data_pts)
+            # crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
 
         print("Render Crust")
         with timed("\tTime: "):

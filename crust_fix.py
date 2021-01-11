@@ -1,51 +1,45 @@
-import multiprocessing
-from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import Optional, Tuple, Dict
 
 import numba
 import numpy as np
-from scipy import ndimage
 
 from data.chunks import ChunkGrid, Chunk, ChunkIndex
 from data.faces import ChunkFace
-from filters.correlate import correlate_grid
 from filters.dilate import dilate
-from mathlib import Vec3i
 from render_cloud import CloudRender
 from render_voxel import VoxelRender
 from utils import timed
 
 
-@dataclass
-class CrustFixWorker:
-    merged: ChunkGrid[np.ndarray]
-    neighbor_mask: np.ndarray
-    angle_threshold: float = np.pi * 0.5
-
-    def run_all(self, positions: np.ndarray):
-        __np_linalg_norm = np.linalg.norm
-        __np_any = np.any
-        __np_arccos = np.arccos
-        merged = self.merged
-        threshold = self.angle_threshold
-        neighbor_mask = self.neighbor_mask
-
-        # Calculate the normal cone
-        result = np.zeros(len(positions), dtype=bool)
-        for n, pos in enumerate(positions):
-            x, y, z = pos
-            neighbors = merged[x - 1:x + 2, y - 1:y + 2, z - 1:z + 2][neighbor_mask]
-            norm = __np_linalg_norm(neighbors, axis=1)
-            cond = norm > 0
-            if __np_any(cond):
-                normalized = (neighbors[cond].T / norm[cond]).T
-                result[n] = __np_any(__np_arccos(normalized @ normalized.T) >= threshold)
-        return positions, result
+# @dataclass
+# class CrustFixWorker:
+#     merged: ChunkGrid[np.ndarray]
+#     neighbor_mask: np.ndarray
+#     angle_threshold: float = np.pi * 0.5
+#
+#     def run_all(self, positions: np.ndarray):
+#         __np_linalg_norm = np.linalg.norm
+#         __np_any = np.any
+#         __np_arccos = np.arccos
+#         merged = self.merged
+#         threshold = self.angle_threshold
+#         neighbor_mask = self.neighbor_mask
+#
+#         # Calculate the normal cone
+#         result = np.zeros(len(positions), dtype=bool)
+#         for n, pos in enumerate(positions):
+#             x, y, z = pos
+#             neighbors = merged[x - 1:x + 2, y - 1:y + 2, z - 1:z + 2][neighbor_mask]
+#             norm = __np_linalg_norm(neighbors, axis=1)
+#             cond = norm > 0
+#             if __np_any(cond):
+#                 normalized = (neighbors[cond].T / norm[cond]).T
+#                 result[n] = __np_any(__np_arccos(normalized @ normalized.T) >= threshold)
+#         return positions, result
 
 
 @numba.njit(parallel=True, fastmath=True)
-def normal_cone_angles(normals: np.ndarray, threshold=0.5 * np.pi, min_norm: float = 1e-10):
+def normal_cone_angles(normals: np.ndarray, threshold=0.5 * np.pi, min_norm: float = 1e-15):
     assert normals.ndim == 4
     assert normals.shape[0] == normals.shape[1] == normals.shape[2]
     assert normals.shape[3] == 3
@@ -71,6 +65,9 @@ def normal_cone_angles(normals: np.ndarray, threshold=0.5 * np.pi, min_norm: flo
         if np.any(cond):
             normalized = (current[cond].T / norm[cond]).T
             result[i[0], i[1], i[2]] = np.any(np.arccos(normalized @ normalized.T) >= threshold)
+        # else:
+        #     # Some normals are very small, which should mean they are close to the medial axis.
+        #     result[i[0], i[1], i[2]] = True
     return result
 
 
@@ -185,8 +182,8 @@ class CorrelationTask:
 def crust_fix(crust: ChunkGrid[np.bool8],
               outer_fill: ChunkGrid[np.bool8],
               crust_outer: ChunkGrid[np.bool8],
+              crust_inner: ChunkGrid[np.bool8],
               min_distance: int = 1,
-              crust_inner: Optional[ChunkGrid[np.bool8]] = None,  # for plotting
               data_pts: Optional[np.ndarray] = None  # for plotting
               ):
     CHUNKSIZE = crust.chunk_size
@@ -323,38 +320,13 @@ def crust_fix(crust: ChunkGrid[np.bool8],
             cones = normal_cone_angles(padded, threshold=0.5 * np.pi)
             crust_fixed.ensure_chunk_at_index(chunk.index).set_array(cones)
 
-        # worker = CrustFixWorker(merged, neighbor_mask)
-        #
-        # items = tuple(zip(*merged.items(mask=crust)))
-        # if items:
-        #     points, normals = items
-        #     points = np.asarray(points, dtype=np.int)
-        #     normals = np.asarray(normals, dtype=np.float)
-        #     cond = np.linalg.norm(normals, axis=1) >= 1e-15
-        #
-        #     # Filter points for valid normals
-        #     points_filtered = points[cond].astype(np.int)
-        #
-        #     # Use numpy to split the work into the pool
-        #     splits = max(1, np.ceil(len(points_filtered) / 4096))
-        #     print("Splits:", splits, ", len:", len(points_filtered))
-        #     if splits > 2:
-        #         result = wpool.imap_unordered(worker.run_all, np.array_split(points_filtered, splits))
-        #     else:
-        #         result = [worker.run_all(points_filtered)]
-        #
-        #     for positions, result in result:
-        #         crust_fixed[positions] = result
-        #
-        #     # Use
-        #     # crust_fixed[points[~cond]] = True
-
     print("\tResult: ")
     with timed("\t\tTime: "):
         # Remove artifacts where the inner and outer crusts are touching
-        # crust_fixed &= ~outer_fill
-        # crust_fixed &= ~dilate(crust_outer, steps=max(1, min_distance))
-        crust_fixed &= ~dilate(outer_fill, steps=max(1, min_distance))
+        mask_fix = outer_fill.copy().pad_chunks(1)
+        mask_fix.fill_value = False
+        mask_fix = ~dilate(mask_fix, steps=max(1, min_distance - 1)) & ~outer_fill
+        crust_fixed &= mask_fix
         crust_fixed.cleanup(remove=True)
 
     print("\tRender 2: ")
