@@ -2,10 +2,12 @@ from typing import Optional, Tuple, Dict
 
 import numba
 import numpy as np
+from scipy import ndimage
 
 from data.chunks import ChunkGrid, Chunk, ChunkIndex
 from data.faces import ChunkFace
 from filters.dilate import dilate
+from mathlib import Vec3f
 from render_cloud import CloudRender
 from render_voxel import VoxelRender
 from utils import timed
@@ -39,35 +41,30 @@ from utils import timed
 
 
 @numba.njit(parallel=True, fastmath=True)
-def normal_cone_angles(normals: np.ndarray, threshold=0.5 * np.pi, min_norm: float = 1e-15):
+def normal_cone_angles(normals: np.ndarray, mask: np.ndarray, threshold=0.5 * np.pi, min_norm: float = 1e-15):
     assert normals.ndim == 4
-    assert normals.shape[0] == normals.shape[1] == normals.shape[2]
-    assert normals.shape[3] == 3
     size = normals.shape[0]
+    assert normals.shape == (size, size, size, 3)
+    assert mask.shape == (size, size, size)
+
     result = np.zeros((size - 2, size - 2, size - 2), dtype=np.bool8)
     for i in numba.pndindex((size - 2, size - 2, size - 2)):
-        # Collect normals
-        current = np.zeros((26, 3), dtype=np.float32)
-        norm = np.zeros(26, dtype=np.float32)
+        # Collect normals for position i
+        current = np.empty((26, 3), dtype=np.float32)  # 26 possible neighbors
         ci: numba.uint32 = 0
         for o in np.ndindex((3, 3, 3)):
             if o != (1, 1, 1):
                 x, y, z = i[0] + o[0], i[1] + o[1], i[2] + o[2]
-                current[ci, 0] = normals[x, y, z, 0]
-                current[ci, 1] = normals[x, y, z, 1]
-                current[ci, 2] = normals[x, y, z, 2]
-                norm[ci] = np.linalg.norm(current[ci])
-                ci += 1
-        assert ci == 26
-
-        # Check Threshold
-        cond = norm > min_norm
-        if np.any(cond):
-            normalized = (current[cond].T / norm[cond]).T
-            result[i[0], i[1], i[2]] = np.any(np.arccos(normalized @ normalized.T) >= threshold)
-        # else:
-        #     # Some normals are very small, which should mean they are close to the medial axis.
-        #     result[i[0], i[1], i[2]] = True
+                if mask[x, y, z]:
+                    value = normals[x, y, z]
+                    norm = np.linalg.norm(value)
+                    if norm > min_norm:  # Only add if norm is valid
+                        current[ci] = value / norm
+                    ci += 1
+        if ci > 0:
+            valid = current[:ci]
+            # Check angle between all valid normals
+            result[i[0], i[1], i[2]] = np.any(np.arccos(valid @ valid.T) > threshold)
     return result
 
 
@@ -97,86 +94,154 @@ def set_array_1d(arr: np.ndarray, pos: np.ndarray, values: np.ndarray):
         arr[pos[i][0], pos[i][1], pos[i][2]] = values[i]
 
 
-@numba.stencil(neighborhood=((-1, 1), (-1, 1), (-1, 1)))
+@numba.stencil(neighborhood=((-1, 1), (-1, 1), (-1, 1)), cval=False)
 def kernel3(a):
-    return numba.float32(0.14285714285714285 * (a[0, 0, 0]
-                                                + a[-1, 0, 0] + a[0, -1, 0] + a[0, 0, -1]
-                                                + a[1, 0, 0] + a[0, 1, 0] + a[0, 0, 1]))
+    return numba.boolean((a[0, 0, 0]
+                          | a[-1, 0, 0] | a[0, -1, 0] | a[0, 0, -1]
+                          | a[1, 0, 0] | a[0, 1, 0] | a[0, 0, 1]))
 
 
-@numba.njit()
-def correlate_iter(image: np.ndarray, positions: np.ndarray, values: np.ndarray, iterations: int) -> np.ndarray:
-    assert len(positions) == len(values)
-    shape = image.shape
-    src = image
-    set_array_1d(src, positions, values)
+@numba.njit(fastmath=True, parallel=True)
+def _collect_normals_at(normals: np.ndarray, mask: np.ndarray, positions: np.ndarray):
+    assert positions.ndim == 2 and positions.shape[1] == 3
+    pos_ignore = normals.shape[0] - 1
+    for pi in numba.prange(len(positions)):
+        pos = positions[pi]
+        # Ignore bounding
+        if np.any(pos == 0) or np.any(pos == pos_ignore):
+            continue
 
-    dst = image.copy()
-    for i in range(iterations):
-        # _correlate(src, dst, kernel)
-        kernel3(src, out=dst)
-        # Swap
-        src_old = src
-        src = dst
-        dst = src_old
-        # Reset
-        set_array_1d(src, positions, values)
-    return src
+        # Propagate only normals that are already set in mask_prev
+        count = 0
+        sum = np.zeros(3, np.float32)
+        for off in np.ndindex(3, 3, 3):
+            poff = pos + np.asarray(off) - 1
+            if mask[poff[0], poff[1], poff[2]]:
+                sum += normals[poff[0], poff[1], poff[2]]
+                count += 1
+        if count > 0:
+            vec = sum / count
+            normals[pos[0], pos[1], pos[2]] = vec / np.linalg.norm(vec)
 
 
-class CorrelationTask:
-    fixed_data: ChunkGrid[np.float32]
-    fixed_mask: ChunkGrid[np.bool8]
+@numba.njit(fastmath=True, parallel=True)
+def _block_propagate_normals(normals: np.ndarray, mask: np.ndarray, max_iterations: int = -1) \
+        -> Tuple[np.ndarray, np.ndarray]:
+    size3 = normals.shape[0]
+    size = size3 // 3
+    assert normals.shape == (size3, size3, size3, 3)
+    assert mask.shape == (size3, size3, size3)
+    mask_prev = mask
 
-    def __init__(self, fixed_data: ChunkGrid[np.float32], fixed_mask: ChunkGrid[np.bool8]):
-        self.fixed_data = fixed_data.astype(np.float32)
-        self.fixed_mask = fixed_mask.astype(np.bool8)
+    if max_iterations < 0:
+        max_iterations = size
+    if np.any(mask):
+        mask_next = np.empty_like(mask)
 
-    def run(self, iterations: int) -> ChunkGrid[np.float32]:
-        assert iterations >= 0
-        size = self.fixed_data.chunk_size
-        block_shape = (3, 3, 3)
+        for i in range(min(size, max_iterations)):
+            # Standard kernel on mask to detect where to propagate a normal next
+            mask_next = kernel3(mask_prev, out=mask_next)
+            changed = np.argwhere(mask_prev ^ mask_next)
 
-        # Cache for initial block values that are fixed
-        fixed_cache: Dict[ChunkIndex, Tuple[np.ndarray, np.ndarray]] = dict()
-
-        def get_fixed_values(index: ChunkIndex):
-            """Get the position and value array for a chunk index. Uses a cache"""
-            key = tuple(index)
-            entry = fixed_cache.get(key, None)
-            if entry is None:
-                data = Chunk.block_to_array(self.fixed_data.get_block_at(key, block_shape, ensure=True, insert=False))
-                mask = Chunk.block_to_array(self.fixed_mask.get_block_at(key, block_shape, ensure=True, insert=False))
-                pos = np.argwhere(mask)
-                values = data[tuple(pos.T)]
-                entry = (pos, values)
-                fixed_cache[key] = entry
-            return entry
-
-        result = self.fixed_data.copy()
-        while iterations > 0:
-            step_iterations = min(iterations, self.fixed_data.chunk_size)
-            iterations -= step_iterations
-            if step_iterations <= 0:
+            if len(changed) == 0:
                 break
+            _collect_normals_at(normals, mask_prev, changed)
 
-            result.pad_chunks(1)
-            tmp = result.copy(empty=True)
-            for index in result.chunks.keys():
-                positions, values = get_fixed_values(index)
-                image = Chunk.block_to_array(result.get_block_at(index, block_shape))
+            # Swap
+            mask_prev_old = mask_prev
+            mask_prev = mask_next
+            mask_next = mask_prev_old
+    return normals, mask_prev
 
-                arr = correlate_iter(image, positions, values, step_iterations)
-                tmp.ensure_chunk_at_index(index).set_array(arr[size:2 * size, size:2 * size, size:2 * size])
-                tmp.set_block_at(index, arr, replace=False)
-            result = tmp
-            # Cleanup
-            result.cleanup(remove=True)
-            # for index in list(result.chunks.keys()):
-            #     c = self.chunks_mask.ensure_chunk_at_index(index, insert=False)
-            #     if not c.any_fast():
-            #         del result.chunks[index]
-        return result
+
+# def propagate_normals_old(data: ChunkGrid[np.ndarray], mask: ChunkGrid[np.bool8], ignore: ChunkGrid,
+#                       iterations: int) -> ChunkGrid[np.float32]:
+#     assert iterations >= 0
+#     size = data.chunk_size
+#     size2 = size + size
+#     block_shape = (3, 3, 3)
+#
+#     result = data.copy()
+#     mask = mask.copy()
+#     mask.cleanup(remove=True)
+#     while iterations > 0:
+#         step_iterations = min(iterations, size)
+#         iterations -= step_iterations
+#         if step_iterations <= 0:
+#             break
+#
+#         tmp_result = result.copy(empty=True)
+#         tmp_mask = mask.copy(empty=True)
+#         for index in mask.chunks.keys():
+#             if not ignore.ensure_chunk_at_index(index).any():
+#                 continue
+#             block_normals = Chunk.block_to_array(result.get_block_at(index, block_shape, ensure=True, insert=False))
+#             block_mask = Chunk.block_to_array(mask.get_block_at(index, block_shape, ensure=True, insert=False))
+#
+#             # Propagate in the 3x3x3 Chunk-Block
+#             block_normals, block_mask = _block_propagate_normals(block_normals, block_mask, step_iterations)
+#
+#             # Set the current chunk
+#             tmp_result.ensure_chunk_at_index(index).set_array(block_normals[size:size2, size:size2, size:size2])
+#             tmp_mask.ensure_chunk_at_index(index).set_array(block_mask[size:size2, size:size2, size:size2])
+#
+#             # Set neighbors in tmp if not existing (will be overwritten if already in mask)
+#             tmp_result.set_block_at(index, block_normals, replace=False)
+#             tmp_mask.set_block_at(index, block_mask, replace=False)
+#
+#         result = tmp_result
+#         mask = tmp_mask
+#         mask.cleanup(remove=True)
+#     # Cleanup
+#     result.cleanup(remove=True)
+#     return result
+
+def propagate_normals(iterations: int, values: ChunkGrid[Vec3f], positions: ChunkGrid[np.bool8],
+                      mask: ChunkGrid[np.bool8]) -> Tuple[ChunkGrid[np.float32], ChunkGrid[np.bool8]]:
+    assert iterations >= 0
+
+    values = values.copy()
+    positions = positions.copy()
+    positions.cleanup(remove=True)
+
+    # Find indices where to operate
+    indices_offset = positions.chunks.minmax()[0]
+    indices = [tuple(i) for i in np.array(list(np.ndindex(*positions.chunks.size())), dtype=np.int) + indices_offset]
+    indices = set(i for i in indices if mask.ensure_chunk_at_index(i, insert=False).any())
+
+    for i in range(iterations):
+        tmp_values = values.copy(empty=True)
+        tmp_positions = positions.copy(empty=True)
+
+        count_changed = 0
+        for index in positions.chunks.keys():
+            if index not in indices:
+                continue
+            pad_mask = positions.ensure_chunk_at_index(index, insert=False).padding(positions, 1, corners=True)
+            if not np.any(pad_mask):
+                continue
+            pad_normals = values.ensure_chunk_at_index(index, insert=False).padding(values, 1, corners=True)
+
+            dil_mask = ndimage.binary_dilation(pad_mask)
+            changed = pad_mask ^ dil_mask
+
+            if np.any(changed):
+                _collect_normals_at(pad_normals, pad_mask, np.argwhere(changed))
+                ch_result = tmp_values.ensure_chunk_at_index(index)
+                ch_mask = tmp_positions.ensure_chunk_at_index(index)
+                ch_result.set_array(pad_normals[1:-1, 1:-1, 1:-1])
+                ch_mask.set_array(dil_mask[1:-1, 1:-1, 1:-1])
+                count_changed += 1
+
+        values = tmp_values
+        positions = tmp_positions
+
+        if count_changed == 0:  # Nothing changed, so abort the loop
+            break
+    # Cleanup
+    values.cleanup(remove=True)
+    positions.cleanup(remove=True)
+    return values, positions
 
 
 def crust_fix(crust: ChunkGrid[np.bool8],
@@ -208,137 +273,86 @@ def crust_fix(crust: ChunkGrid[np.bool8],
 
     print("\tGrid Normals: ")
     with timed("\t\tTime: "):
-        normals_x: ChunkGrid[np.float32] = ChunkGrid(CHUNKSIZE, np.float32, 0.0)
-        normals_y: ChunkGrid[np.float32] = ChunkGrid(CHUNKSIZE, np.float32, 0.0)
-        normals_z: ChunkGrid[np.float32] = ChunkGrid(CHUNKSIZE, np.float32, 0.0)
+        normals: ChunkGrid[np.float32] = ChunkGrid(CHUNKSIZE, np.dtype((np.float32, (3,))), 0.0)
+        normals[normal_pos] = normal_val
 
-        normals_x[normal_pos] = normal_val.T[0]
-        normals_y[normal_pos] = normal_val.T[1]
-        normals_z[normal_pos] = normal_val.T[2]
-
-    print("\tNormal Correlation")
+    print("\tRender Normal Propagation: ")
     with timed("\t\tTime: "):
-        iterations = CHUNKSIZE * 3
-        with timed("\t\tX: "):
-            nfieldx = CorrelationTask(normals_x, crust_outer).run(iterations)
-        with timed("\t\tY: "):
-            nfieldy = CorrelationTask(normals_y, crust_outer).run(iterations)
-        with timed("\t\tZ: "):
-            nfieldz = CorrelationTask(normals_z, crust_outer).run(iterations)
-
-    field_reset_mask = outer_fill ^ crust_outer
-    nfieldx[field_reset_mask] = 0
-    nfieldy[field_reset_mask] = 0
-    nfieldz[field_reset_mask] = 0
-    nfieldx.cleanup(remove=True)
-    nfieldy.cleanup(remove=True)
-    nfieldz.cleanup(remove=True)
-
-    print("mask_x-len:", len(nfieldx.chunks))
-    print("mask_y-len:", len(nfieldy.chunks))
-    print("mask_z-len:", len(nfieldz.chunks))
-
-    print("\tNormal Stacking: ")
-    with timed("\t\tTime: "):
-        merged = ChunkGrid.stack([nfieldx, nfieldy, nfieldz], fill_value=0.0)
-        print("merged-len:", len(merged.chunks))
-
-    print("\tRender 1: ")
-    with timed("\t\tTime: "):
-        # markers_crust = np.array(
-        #     [(p, p + n, (np.nan, np.nan, np.nan)) for p, n in merged.items(mask=crust)]
-        # ).reshape((-1, 3)) + 0.5
-        # markers_outer = np.array(
-        #     [(p, p + n, (np.nan, np.nan, np.nan)) for p, n in merged.items(mask=crust_outer)]
-        # ).reshape((-1, 3)) + 0.5
-
-        markers_crust = np.array(
-            [v for p, n in merged.items(mask=crust) for v in (p, p + n, (np.nan, np.nan, np.nan))],
-            dtype=np.float32
-        ) + 0.5
         markers_outer = np.array(
-            [v for p, n in merged.items(mask=crust_outer) for v in (p, p + n, (np.nan, np.nan, np.nan))],
-            dtype=np.float32
-        ) + 0.5
-        markers_outer_tips = np.array([p + n for p, n in merged.items(mask=crust_outer)], dtype=np.float32) + 0.5
+            [v for p, n in normals.items(mask=crust_outer) for v in (p, p + n, (np.nan, np.nan, np.nan))],
+            dtype=np.float32) + 0.5
+        markers_outer_tips = np.array(
+            [p + n for p, n in normals.items(mask=crust_outer)],
+            dtype=np.float32) + 0.5
 
         ren = CloudRender()
-        fig = ren.make_figure(title="Crust-Fix: Normal field")
+        fig = ren.make_figure(title="Crust-Fix: Start Normal Propagation")
+        fig.add_trace(ren.make_scatter(markers_outer, marker=dict(opacity=0.5, ), mode="lines", name="Start normal"))
+        fig.add_trace(ren.make_scatter(markers_outer_tips, marker=dict(size=1, symbol='x'), name="Start nromal end"))
         if data_pts is not None:
             fig.add_trace(ren.make_scatter(data_pts, opacity=0.1, size=1, name='Model'))
-        fig.add_trace(ren.make_scatter(
-            markers_crust,
-            marker=dict(
-                opacity=0.5,
-            ),
-            mode="lines",
-            name="Normals"
-        ))
-        fig.add_trace(ren.make_scatter(
-            markers_outer,
-            marker=dict(
-                opacity=0.5,
-            ),
-            mode="lines",
-            name="Initial"
-        ))
-        fig.add_trace(ren.make_scatter(
-            markers_outer_tips,
-            marker=dict(
-                size=1,
-                symbol='x'
-            ),
-            name="Initial end"
-        ))
+        fig.show()
+
+    print("\tNormal Propagation")
+    with timed("\t\tTime: "):
+        iterations = CHUNKSIZE
+        nfield, nmask = propagate_normals(iterations, normals, crust_outer, inv_outer_fill)
+        field_reset_mask = outer_fill ^ crust_outer
+        nfield[field_reset_mask] = 0
+        nmask[field_reset_mask] = False
+        nfield.cleanup(remove=True)
+        nmask.cleanup(remove=True)
+
+    print("\tRender Normal Field: ")
+    with timed("\t\tTime: "):
+
+        markers_crust = np.array(
+            [v for p, n in nfield.items(mask=crust) for v in (p, p + n, (np.nan, np.nan, np.nan))],
+            dtype=np.float32) + 0.5
+        markers_outer = np.array(
+            [v for p, n in nfield.items(mask=crust_outer) for v in (p, p + n, (np.nan, np.nan, np.nan))],
+            dtype=np.float32) + 0.5
+        markers_outer_tips = np.array(
+            [p + n for p, n in nfield.items(mask=crust_outer)],
+            dtype=np.float32) + 0.5
+
+        ren = CloudRender()
+        fig = ren.make_figure(title="Crust-Fix: Normal Field")
+        fig.add_trace(ren.make_scatter(markers_outer, marker=dict(opacity=0.5, ), mode="lines", name="Start normal"))
+        fig.add_trace(ren.make_scatter(markers_outer_tips, marker=dict(size=1, symbol='x'), name="Start normal end"))
+        fig.add_trace(ren.make_scatter(markers_crust, marker=dict(opacity=0.5, ), mode="lines", name="Normal field"))
+        # fig.add_trace(VoxelRender().grid_voxel(nmask, opacity=0.1, name="Normal mask"))
+        if data_pts is not None:
+            fig.add_trace(ren.make_scatter(data_pts, opacity=0.1, size=1, name='Model'))
         fig.show()
 
     print("\tNormal cone: ")
     with timed("\t\tTime: "):
-        # Make mask of all 26 neighbors
-        # neighbor_mask = np.ones((3, 3, 3), dtype=bool)
-        # neighbor_mask[1, 1, 1] = False
-
-        # crust_fixed = crust_inner.copy(empty=True)
-        # for p, n in merged.items(mask=crust):
-        #     if __np_linalg_norm(n) < 1e-15:  # Skip small
-        #         continue
-        #     x, y, z = p
-        #     neighbors = merged[x - 1:x + 2, y - 1:y + 2, z - 1:z + 2][neighbor_mask]
-        #     norm = __np_linalg_norm(neighbors, axis=1)
-        #     neighbors = (neighbors[norm > 0].T / norm[norm > 0]).T
-        #     found = np.argwhere(np.arccos(neighbors @ neighbors.T) > np.pi / 2)
-        #     if len(found) > 0:
-        #         crust_fixed.set_value(p, True)
-
-        # __np_linalg_norm = np.linalg.norm
-
-        crust_fixed = crust_outer.copy(empty=True)
-        for chunk in merged.chunks:
-            if not inv_outer_fill.ensure_chunk_at_index(chunk.index, insert=False).any():
-                continue
-            padded = chunk.padding(merged, 1, corners=True)
-            cones = normal_cone_angles(padded, threshold=0.5 * np.pi)
-            crust_fixed.ensure_chunk_at_index(chunk.index).set_array(cones)
+        medial = ChunkGrid(crust.chunk_size, np.bool8, False)
+        cone_threshold: float = 0.5 * np.pi
+        min_norm: float = 1e-15
+        for chunk in nfield.chunks:
+            padded = nfield.padding_at(chunk.index, 1, corners=True, edges=True)
+            padded_mask = nmask.padding_at(chunk.index, 1, corners=True, edges=True)
+            cones = normal_cone_angles(padded, padded_mask, cone_threshold, min_norm)
+            medial.ensure_chunk_at_index(chunk.index).set_array(cones)
 
     print("\tResult: ")
     with timed("\t\tTime: "):
         # Remove artifacts where the inner and outer crusts are touching
-        mask_fix = outer_fill.copy().pad_chunks(1)
-        mask_fix.fill_value = False
-        mask_fix = ~dilate(mask_fix, steps=max(1, min_distance - 1)) & ~outer_fill
-        crust_fixed &= mask_fix
-        crust_fixed.cleanup(remove=True)
+        artifacts_fix = outer_fill.copy().pad_chunks(1)
+        artifacts_fix.fill_value = False
+        artifacts_fix = ~dilate(artifacts_fix, steps=max(1, min_distance - 1)) & ~outer_fill
+        medial_cleaned = medial & artifacts_fix
+        medial_cleaned.cleanup(remove=True)
 
     print("\tRender 2: ")
     with timed("\t\tTime: "):
         ren = VoxelRender()
         fig = ren.make_figure(title="Crust-Fix: Result")
-        fig.add_trace(ren.grid_voxel(crust_fixed, opacity=1.0, name='Fixed'))
-        fig.add_trace(ren.grid_voxel(crust_outer, opacity=0.2, name='Outer'))
-        # if crust_inner is not None:
-        #     fig.add_trace(ren.grid_voxel(crust_inner, opacity=0.2, name='Inner'))
-        # if data_pts is not None:
-        #     fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
+        fig.add_trace(ren.grid_voxel(medial, opacity=0.3, name='Fixed'))
+        # fig.add_trace(ren.grid_voxel(medial_cleaned, opacity=0.05, name='Fixed'))
+        fig.add_trace(ren.grid_voxel(crust_outer, opacity=0.05, name='Outer'))
         fig.show()
 
-    return crust_fixed
+    return medial_cleaned

@@ -1,3 +1,5 @@
+import contextlib
+import contextvars
 import multiprocessing
 from dataclasses import dataclass
 from typing import Optional, Tuple, Sequence, Union
@@ -13,6 +15,7 @@ from data.faces import ChunkFace
 from filters.dilate import dilate
 from filters.fill import flood_fill_at
 from mathlib import Vec3i, Vec3f
+import mesh_extraction
 from model.model_pts import FixedPtsModels
 from render_cloud import CloudRender
 from render_voxel import VoxelRender
@@ -89,7 +92,7 @@ def plot_voxels(grid: ChunkGrid[np.bool8], components: ChunkGrid[np.int8], title
 
 
 def fill_components(crust: ChunkGrid[np.bool8], max_components=4) -> Tuple[ChunkGrid[np.int8], int]:
-    assert crust.fill_value == False
+    assert not crust.fill_value
     components = crust.copy(dtype=np.int8, fill_value=np.int8(0))
     count = 1
     target_fill = points_on_chunk_hull(~crust)
@@ -127,6 +130,7 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, min_steps=3, ma
         else:
             max_count = max(max_count, count)
             crust = dilate(crust)
+            assert crust.any()
 
     print("\tSteps: ", dilation_step)
 
@@ -280,6 +284,8 @@ if __name__ == '__main__':
         model.cleanup()
 
     initial_crust: ChunkGrid[np.bool8] = model.copy()
+    initial_crust.cleanup(remove=True)
+
     # ren = VoxelRender()
     # fig = ren.make_figure()
     # fig.add_trace(ren.grid_voxel(initial_crust, opacity=0.1, name='Initial'))
@@ -308,7 +314,7 @@ if __name__ == '__main__':
     """
     Increase resolution and make the mesh approximation finer
     """
-    for resolution_step in range(0, 4):
+    for resolution_step in range(0, 1):
         print(f"RESOLUTION STEP: {resolution_step}")
 
         """
@@ -367,7 +373,7 @@ if __name__ == '__main__':
 
             # Build new crust
             crust = thincrust.split(2) | model
-            crust = dilate(crust, steps=2)
+            crust = dilate(crust, steps=1)
 
             components, count = fill_components(crust, max_components=2)
             outer_fill = components == 2
@@ -385,3 +391,12 @@ if __name__ == '__main__':
             assert outer_fill._fill_value == True
             assert crust_outer._fill_value == False
             assert crust_inner._fill_value == False
+
+    print("Extract mesh")
+    with timed("\tTime: "):
+        mesh = mesh_extraction.extract_mesh(segment0, segment1, segments)
+        triangles = mesh_extraction.make_triangles(mesh)
+        ren = VoxelRender()
+        fig = ren.make_figure()
+        fig.add_trace(ren.make_mesh(mesh.get_vertex_array(), triangles, name='Mesh'))
+        fig.show()
