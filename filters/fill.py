@@ -80,7 +80,7 @@ class FloodFillOperator:
         self.mask.cleanup(remove=True).pad_chunks(1)
         self.verbose = verbose
         self.__mask_chunks_get = self.mask.chunks.get
-        self.min, self.max = self.mask.chunks.minmax()
+        self.min, self.max = self.mask.chunks.minmax(True)
         self.min -= 1
         self.max += 1
 
@@ -125,7 +125,7 @@ class FloodFillOperator:
             return None
         else:
             mask = mask_chunk.to_array()
-            # Enforce that only "free" fields in dst_mask are filled
+            # Enforce that only "free" fields in mask are filled
             img = task_image & mask
             result = ndimage.binary_propagation(img, mask=mask).astype(b8)
 
@@ -305,7 +305,7 @@ class FloodFillOperator:
 
 def flood_fill(image: ChunkGrid, mask: ChunkGrid, max_steps: Optional[int] = None, verbose=False,
                **kwargs) -> ChunkGrid[b8]:
-    return FloodFillOperator(mask, verbose=verbose).fill(image, max_steps, **kwargs)
+    return FloodFillOperator(mask, verbose=verbose).fill(image, max_steps)
 
 
 def flood_fill_at(position: Vec3i, mask: ChunkGrid, max_steps: Optional[int] = None, verbose=False,

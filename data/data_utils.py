@@ -191,8 +191,8 @@ class MinMaxCheck:
     __slots__ = ["_min", "_max", "_dirty"]
 
     def __init__(self):
-        self._min: Optional[Vec3i] = None
-        self._max: Optional[Vec3i] = None
+        self._min: Optional[Index] = None
+        self._max: Optional[Index] = None
         self._dirty = False
 
     def clear(self):
@@ -200,22 +200,22 @@ class MinMaxCheck:
         self._max = None
         self._dirty = False
 
-    def update(self, other: Union[Iterable[Vec3i]]):
+    def update(self, other: Union[Iterable[Index]]):
         indices = np.array(list(other))
         assert len(indices) > 0
-        self._min = np.min(indices, axis=0)
-        self._max = np.max(indices, axis=0)
+        self._min = tuple(np.min(indices, axis=0))
+        self._max = tuple(np.max(indices, axis=0))
         self._dirty = False
 
-    def add(self, index: Vec3i):
+    def add(self, index: Index):
         if self._min is None:
-            self._min = np.asarray(index, dtype=int)
+            self._min = tuple(np.asarray(index, dtype=int))
         else:
-            self._min = np.min((self._min, index), axis=0)
+            self._min = tuple(np.min((self._min, index), axis=0))
         if self._max is None:
-            self._max = np.asarray(index, dtype=int)
+            self._max = tuple(np.asarray(index, dtype=int))
         else:
-            self._max = np.max((self._max, index), axis=0)
+            self._max = tuple(np.max((self._max, index), axis=0))
 
     @property
     def dirty(self):
@@ -234,11 +234,11 @@ class MinMaxCheck:
         assert not self._dirty
         return self._max
 
-    def get(self) -> Tuple[Vec3i, Vec3i]:
+    def get(self) -> Tuple[Index, Index]:
         assert not self._dirty
         return self._min, self._max
 
-    def safe(self, getter: Callable[[], Union[Iterable[Vec3i]]]) -> Tuple[Vec3i, Vec3i]:
+    def safe(self, getter: Callable[[], Union[Iterable[Index]]]) -> Tuple[Index, Index]:
         if self._dirty:
             self.update(getter())
         return self.get()

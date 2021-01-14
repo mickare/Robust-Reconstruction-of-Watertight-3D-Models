@@ -216,7 +216,10 @@ class Chunk(Generic[V]):
         c = Chunk(self._index, self._size, dtype=dtype, fill_value=fill_value)
         if not empty:
             if self.is_filled():
-                c.set_fill(self._value)
+                value = self._value
+                if dtype.subdtype:
+                    value = np.copy(value)
+                c.set_fill(value)
             else:
                 c.set_array(self._value.copy())
         return c
@@ -294,61 +297,8 @@ class Chunk(Generic[V]):
             return bool(self._value)
         return True
 
-    @classmethod
-    def block_to_array(cls, chunks):
-        chunks = np.asarray(chunks, dtype=np.object)
-        return np.block(
-            [[[chunks[u, v, w].to_array()
-               for w in range(chunks.shape[2])]
-              for v in range(chunks.shape[1])]
-             for u in range(chunks.shape[0])]
-        )
-
-    def padding(self, grid: "ChunkGrid[V]", padding: int, corners=False, value: Optional[V] = None) -> np.ndarray:
-        if padding == 0:
-            return self.to_array()
-        assert padding > 0
-        dtype = self._dtype
-        value = self._dtype.base.type(value) if value is not None else self._fill_value
-
-        # Method cache
-        __chunk_to_array = Chunk.to_array
-
-        size = self._size
-        chunks = grid.get_neigbors_at(self._index, edges=corners, corners=corners)
-        chunks[1, 1, 1] = self
-
-        def __padding_sliced(s: int) -> Tuple[int, int]:
-            """For chunk padding"""
-            if s < 0:
-                return size - padding, size
-            elif s > 0:
-                return 0, padding
-            else:
-                return 0, size
-
-        def __padding_chunk_sliced(u: int, v: int, w: int) -> np.ndarray:
-            """For chunk padding"""
-            u0, u1 = __padding_sliced(u - 1)
-            v0, v1 = __padding_sliced(v - 1)
-            w0, w1 = __padding_sliced(w - 1)
-            chunk: "Chunk" = chunks[u, v, w]
-            if chunk is None:
-                return np.full((u1 - u0, v1 - v0, w1 - w0), value, dtype=dtype)
-            if chunk._is_filled:
-                return np.full((u1 - u0, v1 - v0, w1 - w0), chunk.value, dtype=dtype)
-            return chunk[u0:u1, v0:v1, w0:w1]
-
-        data = [[[__padding_chunk_sliced(u, v, w)
-                  for w in range(3)]
-                 for v in range(3)]
-                for u in range(3)]
-        if dtype.subdtype:
-            return np.concatenate(
-                [np.concatenate([np.concatenate(v, axis=2) for v in u], axis=1) for u in data], axis=0
-            )
-        else:
-            return np.block(data)
+    def padding(self, grid: "ChunkGrid[V]", padding: int, corners=False) -> np.ndarray:
+        return grid.padding_at(self._index, padding, corners=corners, edges=corners)
 
     def apply(self, func: Callable[[Union[np.ndarray, V]], Union[np.ndarray, M]],
               dtype: Optional[Type[M]] = None, inplace=False, ) -> "Chunk[M]":
@@ -357,7 +307,7 @@ class Chunk(Generic[V]):
         # Fill value
         fill_value = self._fill_value
         try:
-            fill_value = func(self._fill_value)
+            fill_value = func(fill_value)
         except Exception as e:
             handling = np.geterr()['invalid']
             if handling == 'raise':
@@ -611,8 +561,7 @@ class ChunkGrid(Generic[V]):
             c._fill_value = value
 
     def size(self) -> Vec3i:
-        index_min, index_max = self.chunks.minmax()
-        return (index_max - index_min + 1) * self._chunk_size
+        return self.chunks.size() * self._chunk_size
 
     def astype(self, dtype: Type[M]) -> "ChunkGrid[M]":
         if self._dtype == dtype:
@@ -720,7 +669,7 @@ class ChunkGrid(Generic[V]):
         # Variable cache
         cs = self._chunk_size
 
-        index_min, index_max = self.chunks.minmax()
+        index_min, index_max = self.chunks.minmax(True)
         pos_min = index_min * cs
         pos_max = (index_max + 1) * cs
         voxel_it = PositionIter(x, y, z, low=pos_min, high=pos_max, clip=False)
@@ -1006,7 +955,7 @@ class ChunkGrid(Generic[V]):
         return chunks
 
     def get_block_at(self, index: ChunkIndex, shape: Tuple[int, int, int], *, offset: Optional[Vec3i] = None,
-                     neighbors=True, edges=True, corners=True, ensure=True, insert=False):
+                     edges=True, corners=True, ensure=True, insert=False):
         assert len(shape) == 3
 
         # Method cache
@@ -1019,17 +968,26 @@ class ChunkGrid(Generic[V]):
             def getter(index):
                 return self.chunks.get(index, default=None)
 
+        _shape = np.asarray(shape)
         chunks = np.full(shape, None, dtype=np.object)
-        offset = np.array(shape) // 2 if offset is None else np.asarray(offset, dtype=np.int)
+        offset = _shape // 2 if offset is None else np.asarray(offset, dtype=np.int)
         assert offset.shape == (3,)
-        chunks[tuple(offset)] = self
 
-        start = index - offset
-        stop = start + shape
-        for u, x in enumerate(range(start[0], stop[0])):
-            for v, y in enumerate(range(start[1], stop[1])):
-                for w, z in enumerate(range(start[2], stop[2])):
-                    chunks[u, v, w] = getter((x, y, z))
+        # Corner/Edge case handling
+        low = np.zeros(3, dtype=int)
+        high = low + _shape - 1
+
+        ignore_chunks = (not edges) or (not corners)
+
+        for i in np.ndindex(shape):
+            chunk_pos = np.add(index, i) - offset
+            if ignore_chunks:
+                s = np.sum(i == low) + np.sum(i == high)
+                if not edges and s == 2:
+                    continue
+                if not corners and s == 3:
+                    continue
+            chunks[i] = getter(chunk_pos)
 
         return chunks
 
@@ -1261,7 +1219,7 @@ class ChunkGrid(Generic[V]):
                      op: Optional[Callable[[Chunk, np.ndarray], Any]] = None, replace: bool = True):
         index_arr = np.asarray(index, dtype=int)
         size = self.chunk_size
-        data_shape = np.array(data.shape, dtype=int)
+        data_shape = np.array(data.shape, dtype=int)[:3]
         assert np.all(data_shape % size == 0)
         block_shape = tuple(data_shape // size)
         block_offset = np.array(block_shape, dtype=int) // 2
@@ -1291,3 +1249,45 @@ class ChunkGrid(Generic[V]):
                             s1 = s0 + size
                             chunk = self.ensure_chunk_at_index(chunk_index)
                             op(chunk, data[s0[0]:s1[0], s0[1]:s1[1], s0[2]:s1[2]])
+
+    def padding_at(self, index: ChunkIndex, padding: int = 1, fill_value: Optional[V] = None,
+                   corners: bool = True, edges: bool = True):
+        assert padding >= 0
+        if padding == 0:
+            return self.ensure_chunk_at_index(index, insert=False).to_array()
+
+        chunk_size = self._chunk_size
+        pad_chunks = int(np.ceil(padding / chunk_size))
+        pad_size = 1 + pad_chunks * 2
+        pad_outer = (chunk_size - padding) % chunk_size
+        chunks = self.get_block_at(index, (pad_size, pad_size, pad_size), corners=corners, edges=edges)
+        block = self.block_to_array(chunks, fill_value=fill_value)
+        if pad_outer:
+            return block[pad_outer:-pad_outer, pad_outer:-pad_outer, pad_outer:-pad_outer]
+        return block
+
+    def block_to_array(self, chunks, fill_value: Optional[V] = None):
+        chunks = np.atleast_3d(np.asarray(chunks, dtype=np.object))
+        cs = self._chunk_size
+        fill_value = self._fill_value if fill_value is None else fill_value
+        dtype = self._dtype
+        chunk_shape = (cs, cs, cs)
+
+        def _to_array(chunk: Optional[Chunk]) -> np.ndarray:
+            if chunk is None:
+                return np.full(chunk_shape, fill_value, dtype=self._dtype)
+            return chunk.to_array()
+
+        data = [[[_to_array(chunks[u, v, w])
+                  for w in range(chunks.shape[2])]
+                 for v in range(chunks.shape[1])]
+                for u in range(chunks.shape[0])]
+
+        if dtype.subdtype:
+            return np.concatenate([
+                np.concatenate([
+                    np.concatenate(v, axis=2)
+                    for v in u], axis=1)
+                for u in data], axis=0)
+        else:
+            return np.block(data)

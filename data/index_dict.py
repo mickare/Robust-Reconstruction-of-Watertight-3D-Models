@@ -34,9 +34,18 @@ class IndexDict(Generic[T]):
             self._minmax.set_dirty()
         return c
 
-    def minmax(self) -> Tuple[Vec3i, Vec3i]:
+    def minmax(self, asarray=False) -> Tuple[Vec3i, Vec3i]:
         """ Returns the min and max index of all contained indices"""
+        if asarray:
+            # noinspection PyTypeChecker
+            return np.asarray(self._minmax.safe(self._data.keys), dtype=np.int)
         return self._minmax.safe(self._data.keys)
+
+    def size(self) -> Vec3i:
+        if self._data:
+            min, max = self.minmax(True)
+            return max - min + 1
+        return np.zeros(3, dtype=np.int)
 
     @classmethod
     def index(cls, item: IndexUnion) -> Index:
@@ -63,7 +72,7 @@ class IndexDict(Generic[T]):
                         z: Union[int, slice, None] = None) -> PositionIter:
         if not self._data:
             return PositionIter.empty()
-        k_min, k_max = self.minmax()
+        k_min, k_max = self.minmax(True)
         return PositionIter(x, y, z, low=k_min, high=k_max + 1)
 
     def sliced(self, x: Union[int, slice, None] = None, y: Union[int, slice, None] = None,

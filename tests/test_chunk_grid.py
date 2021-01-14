@@ -517,3 +517,213 @@ class TestChunkGridMethods(unittest.TestCase):
 
         self.assertEqual(expected.shape, dense.shape)
         self.assertEqual(str(expected), str(dense))
+
+    def test_get_block_1(self):
+        a = ChunkGrid(2, int, 0)
+        expected = np.zeros((6, 6, 6), dtype=int)
+        for n, i in enumerate(np.ndindex(6, 6, 6)):
+            pos = np.array(i, dtype=int) - 2
+            a.set_value(pos, n + 1)
+            expected[i] = n + 1
+
+        block = a.get_block_at((0, 0, 0), (3, 3, 3), corners=True, edges=True)
+        self.assertEqual(str(expected), str(a.block_to_array(block)))
+
+    def test_get_block_2(self):
+        a = ChunkGrid(2, int, 0)
+        expected = np.zeros((6, 6, 6), dtype=int)
+        for n, i in enumerate(np.ndindex(6, 6, 6)):
+            pos = np.array(i, dtype=int) - 2
+            a.set_value(pos, n + 1)
+            s = np.sum(pos < 0) + np.sum(2 <= pos)
+            if s >= 2:
+                continue
+            expected[i] = n + 1
+
+        block = a.get_block_at((0, 0, 0), (3, 3, 3), corners=False, edges=False)
+        self.assertEqual(str(expected), str(a.block_to_array(block)))
+
+    def test_padding_1(self):
+        a = ChunkGrid(2, int, 0)
+        expected = np.zeros((6, 6, 6), dtype=int)
+        for n, i in enumerate(np.ndindex(6, 6, 6)):
+            pos = np.array(i, dtype=int) - 2
+            a.set_value(pos, n + 1)
+            expected[i] = n + 1
+
+        data = a.padding_at((0, 0, 0), 2)
+        self.assertEqual(expected.shape, data.shape)
+        self.assertEqual(str(expected), str(data))
+
+        expected2 = expected[1:-1, 1:-1, 1:-1]
+        data2 = a.padding_at((0, 0, 0), 1)
+        self.assertEqual(expected2.shape, data2.shape)
+        self.assertEqual(str(expected2), str(data2))
+
+        expected3_tmp = np.zeros((6, 6, 6), dtype=int)
+        for n, i in enumerate(np.ndindex(6, 6, 6)):
+            expected3_tmp[i] = n + 1
+        expected3 = np.zeros((8, 8, 8), dtype=int)
+        expected3[1:-1, 1:-1, 1:-1] = expected3_tmp
+        data3 = a.padding_at((0, 0, 0), 3)
+        self.assertEqual(expected3.shape, data3.shape)
+        self.assertEqual(str(expected3), str(data3))
+
+    def test_padding_2(self):
+        a = ChunkGrid(2, int, 0)
+        expected = np.zeros((6, 6, 6), dtype=int)
+        for n, i in enumerate(np.ndindex(6, 6, 6)):
+            pos = np.array(i, dtype=int) - 2
+            a.set_value(pos, n + 1)
+            s = np.sum(pos < 0) + np.sum(2 <= pos)
+            if s >= 2:
+                continue
+            expected[i] = n + 1
+
+        data = a.padding_at((0, 0, 0), 2, corners=False, edges=False)
+        self.assertEqual(expected.shape, data.shape)
+        self.assertEqual(str(expected), str(data))
+
+        expected2 = expected[1:-1, 1:-1, 1:-1]
+        data2 = a.padding_at((0, 0, 0), 1, corners=False, edges=False)
+        self.assertEqual(expected2.shape, data2.shape)
+        self.assertEqual(str(expected2), str(data2))
+
+        expected3_tmp = np.zeros((6, 6, 6), dtype=int)
+        for n, i in enumerate(np.ndindex(6, 6, 6)):
+            expected3_tmp[i] = n + 1
+        expected3 = np.zeros((8, 8, 8), dtype=int)
+        expected3[1:-1, 1:-1, 1:-1] = expected3_tmp
+        data3 = a.padding_at((0, 0, 0), 3, corners=False, edges=False)
+        self.assertEqual(expected3.shape, data3.shape)
+        self.assertEqual(str(expected3), str(data3))
+
+    def test_padding_vec3_1(self):
+        dtype = np.dtype((int, (3,)))
+        a = ChunkGrid(2, dtype, np.zeros(3))
+        a.set_value((0, 0, 2), np.ones(3) * 1)
+        a.set_value((0, 2, 0), np.ones(3) * 2)
+        a.set_value((2, 0, 0), np.ones(3) * 3)
+        a.set_value((1, 1, 1), np.ones(3) * 4)
+
+        a.set_value((2, 2, 2), np.ones(3) * -1)
+        a.set_value((-1, -1, -1), np.ones(3) * -2)
+
+        a.set_value((2, -1, -1), np.ones(3) * -3)
+        a.set_value((-1, 2, -1), np.ones(3) * -4)
+        a.set_value((-1, -1, 2), np.ones(3) * -5)
+
+        a.set_value((2, 2, -1), np.ones(3) * -6)
+        a.set_value((2, -1, 2), np.ones(3) * -7)
+        a.set_value((-1, 2, 2), np.ones(3) * -8)
+
+        pad = a.padding_at((0, 0, 0), 1, corners=False)
+
+        expected = np.zeros((4, 4, 4, 3), dtype=int)
+        expected[1, 1, 3] = 1
+        expected[1, 3, 1] = 2
+        expected[3, 1, 1] = 3
+        expected[2, 2, 2] = 4
+
+        self.assertEqual(expected.shape, pad.shape)
+        self.assertEqual(str(expected), str(pad))
+
+    def test_padding_vec3_2(self):
+        a = ChunkGrid(2, int, 0)
+        expected = np.zeros((6, 6, 6), dtype=int)
+
+        for n, i in enumerate(np.ndindex(6, 6, 6)):
+            pos = np.array(i, dtype=int) - 2
+            value = (n + 1)
+            a.set_value(pos, value)
+            expected[i] = value
+
+        data = a.padding_at((0, 0, 0), 2)
+        self.assertEqual(expected.shape, data.shape)
+        self.assertEqual(str(expected), str(data))
+
+        expected2 = expected[1:-1, 1:-1, 1:-1]
+        data2 = a.padding_at((0, 0, 0), 1)
+        self.assertEqual(expected2.shape, data2.shape)
+        self.assertEqual(str(expected2), str(data2))
+
+    def test_padding_vec3_3(self):
+        dtype = np.dtype((int, (3,)))
+        a = ChunkGrid(2, dtype, np.zeros(3))
+        expected = np.zeros((6, 6, 6, 3), dtype=int)
+
+        for n, i in enumerate(np.ndindex(6, 6, 6)):
+            pos = np.array(i, dtype=int) - 2
+            value = np.array([1, 2, 3]) + (n + 1) * 3
+            a.set_value(pos, value)
+            expected[i] = value
+
+        data = a.padding_at((0, 0, 0), 2, corners=True, edges=True)
+        self.assertEqual(expected.shape, data.shape)
+        self.assertEqual(str(expected), str(data))
+
+        expected2 = expected[1:-1, 1:-1, 1:-1]
+        data2 = a.padding_at((0, 0, 0), 1, corners=True, edges=True)
+        self.assertEqual(expected2.shape, data2.shape)
+        self.assertEqual(str(expected2), str(data2))
+
+        expected3 = np.zeros((8, 8, 8, 3), dtype=int)
+        expected3[1:-1, 1:-1, 1:-1] = expected
+        data3 = a.padding_at((0, 0, 0), 3, corners=True, edges=True)
+        self.assertEqual(expected3.shape, data3.shape)
+        self.assertEqual(str(expected3), str(data3))
+
+    def test_padding_vec3_4(self):
+        dtype = np.dtype((int, (3,)))
+        a = ChunkGrid(2, dtype, np.zeros(3))
+        expected = np.zeros((6, 6, 6, 3), dtype=int)
+
+        for n, i in enumerate(np.ndindex(6, 6, 6)):
+            pos = np.array(i, dtype=int) - 2
+            value = np.array([1, 2, 3]) + (n + 1) * 3
+            a.set_value(pos, value)
+            s = np.sum(pos < 0) + np.sum(2 <= pos)
+            if s >= 2:
+                continue
+            expected[i] = value
+
+        data = a.padding_at((0, 0, 0), 2, corners=False, edges=False)
+        self.assertEqual(expected.shape, data.shape)
+        self.assertEqual(str(expected), str(data))
+
+        expected2 = expected[1:-1, 1:-1, 1:-1]
+        data2 = a.padding_at((0, 0, 0), 1, corners=False, edges=False)
+        self.assertEqual(expected2.shape, data2.shape)
+        self.assertEqual(str(expected2), str(data2))
+
+        expected3_tmp = np.zeros((6, 6, 6, 3), dtype=int)
+        for n, i in enumerate(np.ndindex(6, 6, 6)):
+            value = np.array([1, 2, 3]) + (n + 1) * 3
+            expected3_tmp[i] = value
+        expected3 = np.zeros((8, 8, 8, 3), dtype=int)
+        expected3[1:-1, 1:-1, 1:-1] = expected3_tmp
+        data3 = a.padding_at((0, 0, 0), 3, corners=False, edges=False)
+        self.assertEqual(expected3.shape, data3.shape)
+        self.assertEqual(str(expected3), str(data3))
+
+    def test_padding_no_corners_edges(self):
+        a = ChunkGrid(2, int, -1)
+        expected = np.zeros((6, 6, 6), int)
+
+        for n, i in enumerate(np.ndindex(6, 6, 6)):
+            a.set_value(i, n)
+            expected[i] = n
+
+        self.assertEqual(expected.shape, tuple(a.size()))
+        self.assertEqual(str(expected), str(a.to_dense()))
+
+        padded1 = a.padding_at((1, 1, 1), 1, corners=True, edges=True)
+        expected1 = expected[1:-1, 1:-1, 1:-1]
+        self.assertEqual(str(expected1), str(padded1))
+
+        padded2 = a.padding_at((1, 1, 1), 1, corners=False, edges=False)
+        expected2 = np.full((4, 4, 4), -1, int)
+        expected2[1:-1, 1:-1, :] = expected[2:-2, 2:-2, 1:-1]
+        expected2[1:-1, :, 1:-1] = expected[2:-2, 1:-1, 2:-2]
+        expected2[:, 1:-1, 1:-1] = expected[1:-1, 2:-2, 2:-2]
+        self.assertEqual(str(expected2), str(padded2))
