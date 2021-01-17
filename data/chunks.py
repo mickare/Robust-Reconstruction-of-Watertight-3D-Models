@@ -524,7 +524,10 @@ class Chunk(Generic[V]):
         return new_chunk
 
     def unique(self) -> np.ndarray:
-        return np.unique(self._value)
+        if self._is_filled:
+            return np.asanyarray([self._value])
+        else:
+            return np.unique(self._value)
 
 
 class ChunkGrid(Generic[V]):
@@ -1296,4 +1299,6 @@ class ChunkGrid(Generic[V]):
             return np.block(data)
 
     def unique(self) -> np.ndarray:
-        return np.unique([c.unique() for c in self.chunks])
+        if not self.chunks:
+            return np.empty((0,), dtype=self._dtype)
+        return np.unique(np.concatenate([c.unique() for c in self.chunks]))
