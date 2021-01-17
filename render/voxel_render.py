@@ -206,9 +206,6 @@ def _merge_dz(dz: np.ndarray):
     return dxz, dxyz
 
 
-def _extract_voxel_mesh()
-
-
 class MeshHelper:
     _vert_x = immutable(np.array([(0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1)], dtype=np.int32))
     _vert_y = immutable(np.array([(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)], dtype=np.int32))
