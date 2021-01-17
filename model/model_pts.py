@@ -60,7 +60,7 @@ class FixedPtsModels:
 
 
 if __name__ == '__main__':
-    from render_cloud import CloudRender
+    from render.cloud_render import CloudRender
 
     data = FixedPtsModels.bunny()
 

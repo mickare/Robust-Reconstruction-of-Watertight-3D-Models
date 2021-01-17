@@ -3,8 +3,8 @@ from model.model_pts import PtsModelLoader
 from make_crust import get_crust, get_diffusion, scale_model
 import numpy as np
 
-from render_cloud import CloudRender
-from render_voxel import VoxelRender
+from render.cloud_render import CloudRender
+from render.voxel_render import VoxelRender
 
 data = PtsModelLoader().load("models/bunny/bunnyData.pts")
 # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")

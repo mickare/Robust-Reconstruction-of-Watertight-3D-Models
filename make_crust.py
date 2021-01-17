@@ -9,8 +9,8 @@ from mathlib import Vec3i, Vec3f
 from model.model_pts import PtsModelLoader
 from filters.dilate import dilate
 from filters.fill import flood_fill_at
-from render_cloud import CloudRender
-from render_voxel import VoxelRender
+from render.cloud_render import CloudRender
+from render.voxel_render import VoxelRender
 
 def scale_model(model: np.ndarray, resolution=64) -> Tuple[np.ndarray, Vec3f, float]:
     assert model.ndim == 2 and model.shape[1] == 3

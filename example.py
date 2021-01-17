@@ -1,11 +1,10 @@
 import numpy as np
 
-from data.chunks import ChunkGrid, Chunk
+from data.chunks import ChunkGrid
 from model.model_pts import PtsModelLoader
-from filters.dilate import dilate
 from filters.fill import flood_fill_at
-from render_cloud import CloudRender
-from render_voxel import VoxelRender
+from render.cloud_render import CloudRender
+from render.voxel_render import VoxelRender
 
 if __name__ == '__main__':
     data = PtsModelLoader().load("models/bunny/bunnyData.pts")

@@ -1,15 +1,15 @@
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple
 
 import numba
 import numpy as np
 from scipy import ndimage
 
-from data.chunks import ChunkGrid, Chunk, ChunkIndex
+from data.chunks import ChunkGrid
 from data.faces import ChunkFace
 from filters.dilate import dilate
 from mathlib import Vec3f
-from render_cloud import CloudRender
-from render_voxel import VoxelRender
+from render.cloud_render import CloudRender
+from render.voxel_render import VoxelRender
 from utils import timed
 
 
@@ -350,9 +350,22 @@ def crust_fix(crust: ChunkGrid[np.bool8],
     with timed("\t\tTime: "):
         ren = VoxelRender()
         fig = ren.make_figure(title="Crust-Fix: Result")
-        fig.add_trace(ren.grid_voxel(medial, opacity=0.3, name='Fixed'))
+        fig.add_trace(ren.grid_voxel(medial, opacity=0.3, name='Medial'))
         # fig.add_trace(ren.grid_voxel(medial_cleaned, opacity=0.05, name='Fixed'))
         fig.add_trace(ren.grid_voxel(crust_outer, opacity=0.05, name='Outer'))
+        if data_pts is not None:
+            fig.add_trace(CloudRender().make_scatter(data_pts, opacity=0.2, size=1, name='Model'))
+        fig.show()
+
+    print("\tRender 3: ")
+    with timed("\t\tTime: "):
+        ren = VoxelRender()
+        fig = ren.make_figure(title="Crust-Fix: Result")
+        # fig.add_trace(ren.grid_voxel(medial, opacity=0.3, name='Fixed'))
+        fig.add_trace(ren.grid_voxel(medial_cleaned, opacity=0.3, name='Medial-Cleaned'))
+        fig.add_trace(ren.grid_voxel(crust_outer, opacity=0.05, name='Outer'))
+        if data_pts is not None:
+            fig.add_trace(CloudRender().make_scatter(data_pts, opacity=0.2, size=1, name='Model'))
         fig.show()
 
     return medial_cleaned

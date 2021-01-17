@@ -9,7 +9,7 @@ from data.faces import ChunkFace
 from make_crust import scale_model, get_crust, get_diffusion
 from mathlib import Vec3i
 from model.model_pts import FixedPtsModels
-from render_voxel import VoxelRender
+from render.voxel_render import VoxelRender
 
 TVec3i = Tuple[int, int, int]
 V = TypeVar('V')
