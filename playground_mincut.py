@@ -108,7 +108,7 @@ def fill_components(crust: ChunkGrid[np.bool8], max_components=4) -> Tuple[Chunk
     return components, count
 
 
-def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, min_steps=3, max_steps=20):
+def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, min_steps=3, max_steps=5):
     assert max_steps > 0
     max_count = 0
     dilation_step = 0
@@ -124,7 +124,7 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, min_steps=3, ma
         # plot_voxels(components == 0, components)
         # print(count)
 
-        if dilation_step >= min_steps and max_count > count and count == 2:
+        if dilation_step >= min_steps and max_count >= count and count == 2:
             break
         else:
             max_count = max(max_count, count)
@@ -134,13 +134,14 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, min_steps=3, ma
     print("\tSteps: ", dilation_step)
 
     # Take the crust one step before the inner component vanished.
-    crust = crusts_all[max(0, len(crusts_all) - 2)]
-    components = components_all[max(0, len(components_all) - 2)]
+    step = max(0, dilation_step - 3)
+    crust = crusts_all[step]
+    components = components_all[step]
     # crust = crusts_all[-1]
     # components = components_all[-1]
     crust.cleanup(remove=True)
     components.cleanup(remove=True)
-    return crust, components, dilation_step
+    return crust, components, step
 
 
 # =====================================================================
