@@ -1,5 +1,6 @@
 from typing import Union, Tuple, Sequence
 
+import numba
 import numpy as np
 
 Vec3f = Union[np.ndarray, Sequence[float], Tuple[float, float, float]]
@@ -43,3 +44,18 @@ def quaternion_rotation_matrix(Q):
                            [r20, r21, r22]])
 
     return rot_matrix
+
+
+@numba.njit(fastmath=True)
+def normalize_vec(vec: Vec3f):
+    return vec / np.linalg.norm(vec)
+
+
+@numba.njit(fastmath=True, inline='always')
+def angle_between(a: np.ndarray, b: np.ndarray):
+    return np.arccos(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+
+@numba.njit(fastmath=True, inline='always')
+def angle_between_normals(a: np.ndarray, b: np.ndarray):
+    return np.arccos(np.dot(a, b))

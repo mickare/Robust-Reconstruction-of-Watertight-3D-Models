@@ -380,6 +380,8 @@ if __name__ == '__main__':
             crust_outer = outer_fill & crust_dilate
             crust_inner = (components != 1) & (components != 2) & crust_dilate
 
+            dilation_step = 1
+
             # Validate data
             assert crust._fill_value == False
             assert outer_fill._fill_value == True
