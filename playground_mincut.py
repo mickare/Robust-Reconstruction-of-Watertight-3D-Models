@@ -310,7 +310,7 @@ if __name__ == '__main__':
     """
     Increase resolution and make the mesh approximation finer
     """
-    for resolution_step in range(0, 1):
+    for resolution_step in range(0, 3):
         print(f"RESOLUTION STEP: {resolution_step}")
 
         """
