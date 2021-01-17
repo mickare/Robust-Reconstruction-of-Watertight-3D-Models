@@ -341,12 +341,6 @@ if __name__ == '__main__':
             segment0, segment1, segments, voxels, nodes_index = mincut(diff, crust, crust_outer, crust_inner)
             thincrust = segment0 & segment1
 
-        print("Dilation")
-        with timed("\tTime: "):
-            crust, components, dilation_step = crust_dilation(initial_crust)
-            crust_outer = dilate(components == 2) & crust
-            crust_inner = dilate((components != 1) & (components != 2)) & crust
-
         print("Render")
         with timed("\tTime: "):
             ren = VoxelRender()
