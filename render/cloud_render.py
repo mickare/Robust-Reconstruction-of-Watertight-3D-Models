@@ -60,6 +60,6 @@ class CloudRender:
 
 
 if __name__ == '__main__':
-    data = MeshModelLoader(20000, noise=0.1).load("models/cat/cat_reference.obj")
+    data = MeshModelLoader(20000, noise=0.1).load("../models/cat/cat_reference.obj")
     fig = CloudRender().plot(data)
     fig.show()

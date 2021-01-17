@@ -17,8 +17,8 @@ from filters.fill import flood_fill_at
 from mathlib import Vec3i, Vec3f
 import mesh_extraction
 from model.model_pts import FixedPtsModels
-from render_cloud import CloudRender
-from render_voxel import VoxelRender
+from render.cloud_render import CloudRender
+from render.voxel_render import VoxelRender
 from utils import timed
 
 
