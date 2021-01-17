@@ -361,7 +361,7 @@ if __name__ == '__main__':
             fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
             fig.show()
 
-        print("Volumetric refinment")
+        print("Volumetric refinement")
         with timed("\tTime: "):
             # Rebuild model
             resolution *= 2
@@ -394,8 +394,9 @@ if __name__ == '__main__':
 
     print("Extract mesh")
     with timed("\tTime: "):
-        mesh = mesh_extraction.extract_mesh(segment0, segment1, segments)
-        triangles = mesh_extraction.make_triangles(mesh)
+        mesh_extractor = mesh_extraction.MeshExtraction(segment0, segment1, segments, nodes_index)
+        mesh = mesh_extractor.extract_mesh()
+        triangles = mesh_extractor.make_triangles()
         ren = VoxelRender()
         fig = ren.make_figure()
         fig.add_trace(ren.make_mesh(mesh.get_vertex_array(), triangles, name='Mesh'))
