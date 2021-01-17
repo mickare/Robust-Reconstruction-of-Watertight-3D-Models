@@ -28,13 +28,17 @@ class Transform:
 
     @classmethod
     def from_quat(cls, transl, rot: np.ndarray) -> "Transform":
+        transl = np.asanyarray(transl)
+        rot = np.asanyarray(rot)
+        assert transl.shape == (3,)
+        assert rot.shape == (4,)
         return cls(transl, quaternion_rotation_matrix(rot))
 
     @classmethod
     def read(cls, data: Sequence[float]) -> "Transform":
         assert len(data) == 7
         d = [float(d) for d in data]
-        return cls.from_quat(np.array(d[:3]), np.array(d[3:]))
+        return cls.from_quat(np.asarray(d[:3], dtype=float), np.asarray(d[3:], dtype=float))
 
     def apply(self, points: np.ndarray) -> np.ndarray:
         assert points.shape[1] == 3
@@ -44,7 +48,8 @@ class Transform:
 class Scan:
     _data: Optional[plyfile.PlyData] = None
 
-    def __init__(self, file: str, trans: Transform):
+    def __init__(self, file: str, trans: Optional[Transform] = None):
+        assert os.path.isfile(file)
         self.file = file
         self.trans = trans
 
@@ -56,7 +61,9 @@ class Scan:
     def points(self) -> np.ndarray:
         p = self.get()["vertex"]
         pts = np.transpose((p["x"], p["y"], p["z"]))
-        return self.trans.apply(pts)
+        if self.trans:
+            return self.trans.apply(pts)
+        return pts
 
     def scatter(self, transf: Optional[Transform] = None, **kwargs):
         pts = self.points()
@@ -88,13 +95,13 @@ class ScanFolder:
         scans: List[Scan] = []
 
         for line in conf:
-            if line.startswith("camera"):
+            if line.startswith("camera "):
                 pass
-            elif line.startswith("mesh"):
+            elif line.startswith("mesh "):
                 l = line.split(" ")
                 transform = Transform.read(l[2:])
 
-            elif line.startswith("bmesh"):
+            elif line.startswith("bmesh "):
                 l = line.split(" ")
                 scans.append(Scan(os.path.join(base, l[1]), Transform.read(l[2:])))
         return cls(transform, scans)
@@ -104,7 +111,7 @@ class ScanFolder:
             yield scan.points()
 
 
-class PlyModelLoader(ModelLoader):
+class PlyFolderLoader(ModelLoader):
 
     def load_file(self, path: str) -> np.ndarray:
         folder = ScanFolder.load_ply_conf(path)
@@ -132,9 +139,36 @@ class PlyModelLoader(ModelLoader):
         else:
             print(f"Loading {fname} from File...")
             data = self.load_file(path)
-            os.makedirs("../.cache")
+            os.makedirs("../.cache", exist_ok=True)
             np.save(file, data, allow_pickle=False)
 
+        return data
+
+    def load(self, path: str) -> np.ndarray:
+        return self.load_cache(path)
+
+
+class PlyModelLoader(ModelLoader):
+
+    def load_file(self, path: str) -> np.ndarray:
+        return Scan(path).points()
+
+    def load_cache(self, path: str):
+        fname = os.path.basename(path)
+        h = hashlib.sha256()
+        h.update(path.encode('utf-8'))
+        h.update(os.path.getsize(path).to_bytes(10, byteorder='big'))
+        key = h.hexdigest()
+
+        file = os.path.join("../.cache", f"{key}_ply.npy")
+        if os.path.isfile(file):
+            print(f"Loading {fname} from Cache...")
+            data = np.load(file, allow_pickle=False)
+        else:
+            print(f"Loading {fname} from File...")
+            data = self.load_file(path)
+            os.makedirs("../.cache", exist_ok=True)
+            np.save(file, data, allow_pickle=False)
         return data
 
     def load(self, path: str) -> np.ndarray:
