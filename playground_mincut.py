@@ -392,5 +392,7 @@ if __name__ == '__main__':
             triangles = mesh_extractor.make_triangles()
             ren = VoxelRender()
             fig = ren.make_figure()
+            mesh_vertices = mesh.get_vertex_array()
             fig.add_trace(ren.make_mesh(mesh.get_vertex_array(), triangles, name='Mesh'))
+            fig.add_trace(ren.make_wireframe(mesh_vertices, triangles, name='Wireframe'))
             fig.show()
