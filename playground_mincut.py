@@ -85,7 +85,7 @@ def plot_voxels(grid: ChunkGrid[np.bool8], components: ChunkGrid[np.int8], title
     unique = components.unique()
     for c in unique:
         if c > 2:
-            fig.add_trace(ren.grid_voxel(components > 2, opacity=1.0, name=f"Component {c}"))
+            fig.add_trace(ren.grid_voxel(components == c, opacity=1.0, name=f"Component {c}"))
     fig.update_layout(showlegend=True)
     fig.show()
 
