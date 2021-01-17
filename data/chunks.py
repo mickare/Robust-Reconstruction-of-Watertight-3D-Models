@@ -523,6 +523,9 @@ class Chunk(Generic[V]):
             new_chunk.set_array(arr)
         return new_chunk
 
+    def unique(self) -> np.ndarray:
+        return np.unique(self._value)
+
 
 class ChunkGrid(Generic[V]):
     __slots__ = ('_chunk_size', '_dtype', '_fill_value', 'chunks')
@@ -1291,3 +1294,6 @@ class ChunkGrid(Generic[V]):
                 for u in data], axis=0)
         else:
             return np.block(data)
+
+    def unique(self) -> np.ndarray:
+        return np.unique([c.unique() for c in self.chunks])
