@@ -382,12 +382,12 @@ if __name__ == '__main__':
             assert crust_outer._fill_value == False
             assert crust_inner._fill_value == False
 
-    print("Extract mesh")
-    with timed("\tTime: "):
-        mesh_extractor = mesh_extraction.MeshExtraction(segment0, segment1, segments, nodes_index)
-        mesh = mesh_extractor.extract_mesh()
-        triangles = mesh_extractor.make_triangles()
-        ren = VoxelRender()
-        fig = ren.make_figure()
-        fig.add_trace(ren.make_mesh(mesh.get_vertex_array(), triangles, name='Mesh'))
-        fig.show()
+        print("Extract mesh")
+        with timed("\tTime: "):
+            mesh_extractor = mesh_extraction.MeshExtraction(segment0, segment1, segments, nodes_index)
+            mesh = mesh_extractor.extract_mesh()
+            triangles = mesh_extractor.make_triangles()
+            ren = VoxelRender()
+            fig = ren.make_figure()
+            fig.add_trace(ren.make_mesh(mesh.get_vertex_array(), triangles, name='Mesh'))
+            fig.show()
