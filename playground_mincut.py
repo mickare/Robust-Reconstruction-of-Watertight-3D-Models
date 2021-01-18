@@ -5,7 +5,7 @@ import numpy as np
 import tqdm
 from scipy import ndimage
 
-from crust_fix import crust_fix
+from crust_fix2 import crust_fix
 from data.chunks import ChunkGrid, Chunk
 from data.faces import ChunkFace
 from filters.dilate import dilate
