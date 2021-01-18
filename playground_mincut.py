@@ -12,7 +12,8 @@ from filters.dilate import dilate
 from filters.fill import flood_fill_at
 from mathlib import Vec3i, Vec3f
 import mesh_extraction
-from model.model_pts import FixedPtsModels
+from model.dragon import Dragon
+from model.model_ply import PlyModelLoader
 from render.cloud_render import CloudRender
 from render.voxel_render import VoxelRender
 from utils import timed
@@ -114,12 +115,14 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, min_steps=3, ma
     dilation_step = 0
     crusts_all = []
     components_all = []
+    counts_all = []
 
     for dilation_step in range(max_steps):
         print(f"\t\tDilation-Step {dilation_step}")
         components, count = fill_components(crust, max_components=max_components)
         crusts_all.append(crust)
         components_all.append(components)
+        counts_all.append(count)
 
         # plot_voxels(components == 0, components)
         # print(count)
@@ -273,10 +276,15 @@ if __name__ == '__main__':
     CHUNKSIZE = 16
     resolution = 64
 
+    plot_model = False
+
     print("Loading model")
     with timed("\tTime: "):
-        data = FixedPtsModels.bunny()
+        # data = FixedPtsModels.bunny()
         # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
+        # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
+        # data = PlyModelLoader().load("models/dragon_up/dragonUpRight.conf")
+        data = Dragon().load()
         data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
         model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
         model[data_pts] = True
@@ -312,7 +320,7 @@ if __name__ == '__main__':
         assert crust_inner._fill_value == False
 
     """
-    Increase resolution and make the mesh approximation finer
+    Increase resolution and make the crust_fixmesh approximation finer
     """
     for resolution_step in range(0, 3):
         print(f"RESOLUTION STEP: {resolution_step}")
@@ -323,8 +331,11 @@ if __name__ == '__main__':
         """
         print("Crust-Fix")
         with timed("\tTime: "):
-            crust_inner |= crust_fix(crust, outer_fill, crust_outer, crust_inner,
-                                     min_distance=dilation_step, data_pts=data_pts)
+            crust_inner |= crust_fix(
+                crust, outer_fill, crust_outer, crust_inner,
+                min_distance=dilation_step,
+                data_pts=data_pts if plot_model else None
+            )
             # crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
 
         print("Render Crust")
@@ -333,7 +344,8 @@ if __name__ == '__main__':
             fig = ren.make_figure(title=f"Step-{resolution_step}: Crust")
             fig.add_trace(ren.grid_voxel(crust_outer, opacity=0.1, name='Outer'))
             fig.add_trace(ren.grid_voxel(crust_inner, opacity=1.0, name='Inner'))
-            fig.add_trace(CloudRender().make_scatter(data_pts, size=0.7, name='Model'))
+            if plot_model:
+                fig.add_trace(CloudRender().make_scatter(data_pts, size=0.7, name='Model'))
             fig.show()
 
         print("Diffusion")
@@ -352,7 +364,8 @@ if __name__ == '__main__':
             fig.add_trace(ren.grid_voxel(segment0, opacity=0.1, name='Segment 0'))
             fig.add_trace(ren.grid_voxel(segment1, opacity=0.1, name='Segment 1'))
             fig.add_trace(ren.grid_voxel(thincrust, opacity=1.0, name='Join'))
-            fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
+            if plot_model:
+                fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
             fig.show()
 
         print("Volumetric refinement")
