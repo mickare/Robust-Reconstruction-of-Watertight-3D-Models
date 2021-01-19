@@ -409,7 +409,7 @@ if __name__ == '__main__':
 
             # Smoothing
             pytorch_mesh = mesh_extractor.get_pytorch_mesh()
-            smoothed_vertices = mesh_extractor.smoothe(mesh.get_vertex_array(), triangles, diff, pytorch_mesh)
+            smoothed_vertices = mesh_extractor.smooth(mesh.get_vertex_array(), triangles, diff, pytorch_mesh)
             ren = VoxelRender()
             fig = ren.make_figure()
             verts = smoothed_vertices.cpu().detach().numpy()
