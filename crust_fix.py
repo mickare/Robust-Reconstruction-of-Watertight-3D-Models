@@ -38,7 +38,7 @@ def normal_cone_angles(normals: np.ndarray, mask: np.ndarray, threshold=0.5 * np
                     if norm > min_norm:  # Only add if norm is valid
                         current[ci] = value / norm
                         ci += 1
-        if ci > 1:
+        if ci > 3:
             valid = current[:ci]
             # Check angle between all valid normals
             result[i[0], i[1], i[2]] = np.any(np.arccos(valid @ valid.T) > threshold)
@@ -269,7 +269,7 @@ def crust_fix(crust: ChunkGrid[np.bool8],
         # Remove artifacts where the inner and outer crusts are touching
         artifacts_fix = outer_fill.copy().pad_chunks(1)
         artifacts_fix.fill_value = False
-        artifacts_fix = ~dilate(artifacts_fix, steps=max(1, min_distance)) & ~outer_fill
+        artifacts_fix = ~dilate(artifacts_fix, steps=max(1, min_distance) + 1) & ~outer_fill
         medial_cleaned = medial & artifacts_fix
         medial_cleaned.cleanup(remove=True)
 
