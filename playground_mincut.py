@@ -16,6 +16,7 @@ from model.model_pts import FixedPtsModels
 from render.cloud_render import CloudRender
 from render.voxel_render import VoxelRender
 from utils import timed
+import torch
 
 
 # =====================================================================
@@ -134,7 +135,8 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, min_steps=3, ma
     print("\tSteps: ", dilation_step)
 
     # Take the crust one step before the inner component vanished.
-    step = max(0, dilation_step - 3)
+    steps_back = 15
+    step = max(0, dilation_step - steps_back)
     crust = crusts_all[step]
     components = components_all[step]
     # crust = crusts_all[-1]
@@ -395,7 +397,13 @@ if __name__ == '__main__':
             triangles = mesh_extractor.make_triangles()
             ren = VoxelRender()
             fig = ren.make_figure()
-            mesh_vertices = mesh.get_vertex_array()
             fig.add_trace(ren.make_mesh(mesh.get_vertex_array(), triangles, name='Mesh'))
-            fig.add_trace(ren.make_wireframe(mesh_vertices, triangles, name='Wireframe'))
+            fig.show()
+            pytorch_mesh = mesh_extractor.get_pytorch_mesh()
+            smoothed_vertices = mesh_extractor.smoothe(mesh.get_vertex_array(), triangles, diff, pytorch_mesh)
+            ren = VoxelRender()
+            fig = ren.make_figure()
+            verts = smoothed_vertices.cpu().detach().numpy()
+            faces = torch.cat(pytorch_mesh.faces_list()).cpu().detach().numpy()
+            fig.add_trace(ren.make_mesh(verts, faces, name='Mesh'))
             fig.show()
