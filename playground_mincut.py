@@ -13,6 +13,7 @@ from filters.dilate import dilate
 from filters.fill import flood_fill_at
 from mathlib import Vec3i, Vec3f
 import mesh_extraction
+from model.bunny import FixedBunny
 from model.dragon import Dragon
 from model.bunny import FixedBunny
 from render.cloud_render import CloudRender
@@ -414,5 +415,5 @@ if __name__ == '__main__':
             verts = smoothed_vertices.cpu().detach().numpy()
             faces = torch.cat(pytorch_mesh.faces_list()).cpu().detach().numpy()
             fig.add_trace(ren.make_mesh(verts, faces, name='Mesh'))
-            fig.add_trace(ren.make_wireframe(mesh, triangles, name='Wireframe'))
+            fig.add_trace(ren.make_wireframe(verts, faces, name='Wireframe'))
             fig.show()
