@@ -1,11 +1,12 @@
 from typing import Optional, Tuple, Sequence
 
 import maxflow
+import numba
 import numpy as np
 import tqdm
 from scipy import ndimage
 
-from crust_fix2 import crust_fix
+from crust_fix import crust_fix
 from data.chunks import ChunkGrid, Chunk
 from data.faces import ChunkFace
 from filters.dilate import dilate
@@ -17,6 +18,8 @@ from model.model_ply import PlyModelLoader
 from render.cloud_render import CloudRender
 from render.voxel_render import VoxelRender
 from utils import timed
+
+numba.config.THREADING_LAYER = 'omp'
 
 
 # =====================================================================
@@ -109,7 +112,7 @@ def fill_components(crust: ChunkGrid[np.bool8], max_components=4) -> Tuple[Chunk
     return components, count
 
 
-def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, min_steps=3, max_steps=5):
+def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, reverse_steps=3, max_steps=5):
     assert max_steps > 0
     max_count = 0
     dilation_step = 0
@@ -127,7 +130,7 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, min_steps=3, ma
         # plot_voxels(components == 0, components)
         # print(count)
 
-        if dilation_step >= min_steps and max_count >= count and count == 2:
+        if max_count >= count and count == 2:
             break
         else:
             max_count = max(max_count, count)
@@ -137,7 +140,8 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, min_steps=3, ma
     print("\tSteps: ", dilation_step)
 
     # Take the crust one step before the inner component vanished.
-    step = max(0, dilation_step - 3)
+
+    step = max(0, dilation_step - reverse_steps)
     crust = crusts_all[step]
     components = components_all[step]
     # crust = crusts_all[-1]
@@ -276,8 +280,6 @@ if __name__ == '__main__':
     CHUNKSIZE = 16
     resolution = 64
 
-    plot_model = False
-
     print("Loading model")
     with timed("\tTime: "):
         # data = FixedPtsModels.bunny()
@@ -291,8 +293,10 @@ if __name__ == '__main__':
         model.pad_chunks(2)
         model.cleanup()
 
-    initial_crust: ChunkGrid[np.bool8] = model.copy()
-    initial_crust.cleanup(remove=True)
+    plot_model: Optional[np.ndarray] = data_pts[::5]
+
+    crust: ChunkGrid[np.bool8] = model.copy()
+    crust.cleanup(remove=True)
 
     # ren = VoxelRender()
     # fig = ren.make_figure()
@@ -300,12 +304,9 @@ if __name__ == '__main__':
     # fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
     # fig.show()
 
-    """
-    Only one dilation to find the outer and inner crust at a lower resolution.
-    """
     print("Dilation")
     with timed("\tTime: "):
-        crust, components, dilation_step = crust_dilation(initial_crust, max_steps=CHUNKSIZE * 2)
+        crust, components, dilation_step = crust_dilation(crust, max_steps=CHUNKSIZE * 2, reverse_steps=3)
         # assert components._fill_value == 2
 
         plot_voxels(components == 0, components, title=f"Initial Dilation")
@@ -320,23 +321,23 @@ if __name__ == '__main__':
         assert crust_inner._fill_value == False
 
     """
+           Approximate Voxel near Medial Axis, by propagating a Normal field inwards.
+           Then for each voxel compute a normal cone and mark the voxel as inner component when the cone angle is greater than 90°.
+           """
+    print("Crust-Fix")
+    # with timed("\tTime: "):
+    #     crust_inner |= crust_fix(
+    #         crust, outer_fill, crust_outer, crust_inner,
+    #         min_distance=dilation_step,
+    #         data_pts=plot_model
+    #     )
+    #     # crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
+
+    """
     Increase resolution and make the crust_fixmesh approximation finer
     """
-    for resolution_step in range(0, 3):
+    for resolution_step in range(0, 5):
         print(f"RESOLUTION STEP: {resolution_step}")
-
-        """
-        Approximate Voxel near Medial Axis, by propagating a Normal field inwards.
-        Then for each voxel compute a normal cone and mark the voxel as inner component when the cone angle is greater than 90°.
-        """
-        print("Crust-Fix")
-        with timed("\tTime: "):
-            crust_inner |= crust_fix(
-                crust, outer_fill, crust_outer, crust_inner,
-                min_distance=dilation_step,
-                data_pts=data_pts if plot_model else None
-            )
-            # crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
 
         print("Render Crust")
         with timed("\tTime: "):
@@ -344,8 +345,8 @@ if __name__ == '__main__':
             fig = ren.make_figure(title=f"Step-{resolution_step}: Crust")
             fig.add_trace(ren.grid_voxel(crust_outer, opacity=0.1, name='Outer'))
             fig.add_trace(ren.grid_voxel(crust_inner, opacity=1.0, name='Inner'))
-            if plot_model:
-                fig.add_trace(CloudRender().make_scatter(data_pts, size=0.7, name='Model'))
+            if plot_model is not None:
+                fig.add_trace(CloudRender().make_scatter(plot_model, size=0.7, name='Model'))
             fig.show()
 
         print("Diffusion")
@@ -364,8 +365,8 @@ if __name__ == '__main__':
             fig.add_trace(ren.grid_voxel(segment0, opacity=0.1, name='Segment 0'))
             fig.add_trace(ren.grid_voxel(segment1, opacity=0.1, name='Segment 1'))
             fig.add_trace(ren.grid_voxel(thincrust, opacity=1.0, name='Join'))
-            if plot_model:
-                fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
+            if plot_model is not None:
+                fig.add_trace(CloudRender().make_scatter(plot_model, size=1, name='Model'))
             fig.show()
 
         print("Volumetric refinement")
@@ -373,14 +374,13 @@ if __name__ == '__main__':
             # Rebuild model
             resolution *= 2
             data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
-            model = ChunkGrid(initial_crust.chunk_size, np.bool8, fill_value=np.bool8(False))
+            model = ChunkGrid(CHUNKSIZE, np.bool8, fill_value=np.bool8(False))
             model[data_pts] = np.bool8(True)
-            model.pad_chunks(1)
-            model.cleanup()
+
+            plot_model: Optional[np.ndarray] = data_pts[::5]
 
             # Build new crust
-            crust = thincrust.split(2) | model
-            crust = dilate(crust, steps=1)
+            crust = dilate(dilate(thincrust.split(2), steps=1) | dilate(model, steps=3))
 
             components, count = fill_components(crust, max_components=2)
             outer_fill = components == 2
@@ -393,7 +393,7 @@ if __name__ == '__main__':
             crust_outer = outer_fill & crust_dilate
             crust_inner = (components != 1) & (components != 2) & crust_dilate
 
-            dilation_step = 1
+            dilation_step = 2
 
             # Validate data
             assert crust._fill_value == False
@@ -409,6 +409,6 @@ if __name__ == '__main__':
             ren = VoxelRender()
             fig = ren.make_figure()
             mesh_vertices = mesh.get_vertex_array()
-            fig.add_trace(ren.make_mesh(mesh.get_vertex_array(), triangles, name='Mesh'))
+            fig.add_trace(ren.make_mesh(mesh.get_vertex_array(), triangles, name='Mesh', flatshading=False))
             fig.add_trace(ren.make_wireframe(mesh_vertices, triangles, name='Wireframe'))
             fig.show()
