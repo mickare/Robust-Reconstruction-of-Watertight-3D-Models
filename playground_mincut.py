@@ -141,13 +141,8 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, reverse_steps=3
     print("\tSteps: ", dilation_step)
 
     # Take the crust one step before the inner component vanished.
-<<<<<<< HEAD
 
     step = max(0, dilation_step - reverse_steps)
-=======
-    steps_back = 15
-    step = max(0, dilation_step - steps_back)
->>>>>>> 74f6dc067714fd004a3e5aae92a35ec71ee8c118
     crust = crusts_all[step]
     components = components_all[step]
     # crust = crusts_all[-1]
@@ -409,9 +404,12 @@ if __name__ == '__main__':
 
         print("Extract mesh")
         with timed("\tTime: "):
+            # Extraction
             mesh_extractor = mesh_extraction.MeshExtraction(segment0, segment1, segments, nodes_index)
             mesh = mesh_extractor.extract_mesh()
             triangles = mesh_extractor.make_triangles()
+
+            # Smoothing
             pytorch_mesh = mesh_extractor.get_pytorch_mesh()
             smoothed_vertices = mesh_extractor.smoothe(mesh.get_vertex_array(), triangles, diff, pytorch_mesh)
             ren = VoxelRender()
