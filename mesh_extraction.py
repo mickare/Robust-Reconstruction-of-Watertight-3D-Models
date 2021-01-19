@@ -3,6 +3,8 @@ import enum
 from data.chunks import ChunkGrid, ChunkFace
 from mathlib import Vec3i, Vec3f
 from typing import Tuple, Sequence, List, Set
+import torch
+from pytorch3d.structures import Meshes
 
 NodeIndex = Tuple[Vec3i, ChunkFace]
 
@@ -39,6 +41,12 @@ class PolyMesh:
             vertices[self.vertices[v]] = np.array(v)
         return vertices
 
+    def get_vertex_list(self) -> list:
+        vertices = [[] for i in self.vertices.keys()]
+        for v in self.vertices.keys():
+            vertices[self.vertices[v]] = list(v)
+        return vertices
+
 
 class MeshExtraction:
     def __init__(self, segment0: ChunkGrid[np.bool], segment1: ChunkGrid[np.bool], segments: np.ndarray,
@@ -56,6 +64,7 @@ class MeshExtraction:
         invalid_faces = 0
         while block is not None:
             if not self.make_face(block):
+                print(block)
                 invalid_faces += 1
             next_block_pos = self.get_next_block(block[0])
             if next_block_pos is not None:
@@ -222,11 +231,43 @@ class MeshExtraction:
         edges = set(edges) - {edge}
         return nodes[edges.pop().flip()], nodes[edges.pop().flip()]
 
-    def smoothe(self, vertices: np.ndarray, faces: np.ndarray, diffusion: ChunkGrid[float]):
+    def smoothe(self, vertices: np.ndarray, faces: np.ndarray, diffusion: ChunkGrid[float], original_mesh: Meshes,
+                max_iteration=50):
+        assert max_iteration > -1
+        change = True
+        iteration = 0
+        loss_mesh = original_mesh.clone()
+        smoothe_verts = loss_mesh.verts_packed().clone()
         neighbors = self.compute_neighbors(vertices, faces)
-        for i, v in enumerate(vertices):
-            neighbor_valences = sum([len(neighbors[n]) for n in neighbors[i]])
-            d = 1 + (1 / len(neighbors[i])) * neighbor_valences
+        neighbor_len = torch.IntTensor([len(neighbors[i]) for i in range(len(vertices))])
+        neighbor_valences = torch.FloatTensor(
+            [sum([1 / neighbor_len[n] for n in neighbors[i]]) for i in range(len(vertices))])
+        d = 1 + 1 / neighbor_len * neighbor_valences
+
+        while change and iteration < max_iteration:
+            iteration += 1
+            print(iteration)
+            change = False
+
+            for i in range(2):
+                with torch.no_grad():
+                    L = loss_mesh.laplacian_packed()
+                loss = L.mm(loss_mesh.verts_packed())
+                if i == 0:
+                    loss_mesh = Meshes([loss], loss_mesh.faces_list())
+
+            # new_vals = smoothe_verts - (1/d).unsqueeze(1) * loss
+            # difference = torch.sqrt(torch.sum(torch.pow(original_mesh.verts_packed() - new_vals, 2), dim=1))
+
+            for i, v in enumerate(vertices):
+                new_val = smoothe_verts[i] - 1 / d[i] * loss[i]
+                difference = torch.dist(original_mesh.verts_packed()[i], new_val)
+                if difference < 1 + diffusion.get_value(vertices[i]):
+                    smoothe_verts[i] = new_val
+                    change = True
+
+            loss_mesh = Meshes([smoothe_verts], original_mesh.faces_list())
+        return smoothe_verts
 
     def compute_neighbors(self, vertices: np.ndarray, faces: np.ndarray) -> List[Set]:
         neighbors = [set() for i in vertices]
@@ -247,6 +288,16 @@ class MeshExtraction:
                 triangles.append([f[0], f[i + 1], f[i + 2]])
         return np.array(triangles)
 
+    def make_triangles_list(self):
+        triangles = []
+        for f in self.mesh.faces:
+            if len(f) == 3:
+                triangles.append(f)
+                continue
+            for i in range(len(f) - 2):
+                triangles.append([f[0], f[i + 1], f[i + 2]])
+        return triangles
+
     def get_node(self, pos: Vec3i, face: ChunkFace) -> NodeIndex:
         """Basically forces to have only positive-direction faces"""
         if face % 2 == 0:
@@ -260,3 +311,8 @@ class MeshExtraction:
             pos,
             np.asarray(face.direction()) * (face.flip() % 2) + pos
         ]
+
+    def get_pytorch_mesh(self) -> Meshes:
+        verts = torch.FloatTensor(self.mesh.get_vertex_list())
+        faces_idx = torch.LongTensor(self.make_triangles_list())
+        return Meshes(verts=[verts], faces=[faces_idx])

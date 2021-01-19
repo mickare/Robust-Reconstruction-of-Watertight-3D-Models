@@ -18,6 +18,7 @@ from model.model_ply import PlyModelLoader
 from render.cloud_render import CloudRender
 from render.voxel_render import VoxelRender
 from utils import timed
+import torch
 
 numba.config.THREADING_LAYER = 'omp'
 
@@ -140,8 +141,13 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, reverse_steps=3
     print("\tSteps: ", dilation_step)
 
     # Take the crust one step before the inner component vanished.
+<<<<<<< HEAD
 
     step = max(0, dilation_step - reverse_steps)
+=======
+    steps_back = 15
+    step = max(0, dilation_step - steps_back)
+>>>>>>> 74f6dc067714fd004a3e5aae92a35ec71ee8c118
     crust = crusts_all[step]
     components = components_all[step]
     # crust = crusts_all[-1]
@@ -406,9 +412,12 @@ if __name__ == '__main__':
             mesh_extractor = mesh_extraction.MeshExtraction(segment0, segment1, segments, nodes_index)
             mesh = mesh_extractor.extract_mesh()
             triangles = mesh_extractor.make_triangles()
+            pytorch_mesh = mesh_extractor.get_pytorch_mesh()
+            smoothed_vertices = mesh_extractor.smoothe(mesh.get_vertex_array(), triangles, diff, pytorch_mesh)
             ren = VoxelRender()
             fig = ren.make_figure()
-            mesh_vertices = mesh.get_vertex_array()
-            fig.add_trace(ren.make_mesh(mesh.get_vertex_array(), triangles, name='Mesh', flatshading=False))
+            verts = smoothed_vertices.cpu().detach().numpy()
+            faces = torch.cat(pytorch_mesh.faces_list()).cpu().detach().numpy()
+            fig.add_trace(ren.make_mesh(verts, faces, name='Mesh'))
             fig.add_trace(ren.make_wireframe(mesh_vertices, triangles, name='Wireframe'))
             fig.show()

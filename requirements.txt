@@ -6,3 +6,5 @@ plotly
 tqdm
 PyWavefront
 PyMaxflow
+torch
+pytorch3d
