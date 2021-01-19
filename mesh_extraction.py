@@ -125,6 +125,8 @@ class MeshExtraction:
                 indices.append(index)
         if len(indices) == 6:
             return np.array([self.nodes_index[i] for i in indices])
+        else:
+            print("pos: ", pos, "num nodes: ", len(indices))
 
     def get_cut_edges(self, block_id, nodes: np.ndarray) -> tuple:
         cut_edges = []
@@ -231,13 +233,13 @@ class MeshExtraction:
         edges = set(edges) - {edge}
         return nodes[edges.pop().flip()], nodes[edges.pop().flip()]
 
-    def smoothe(self, vertices: np.ndarray, faces: np.ndarray, diffusion: ChunkGrid[float], original_mesh: Meshes,
+    def smooth(self, vertices: np.ndarray, faces: np.ndarray, diffusion: ChunkGrid[float], original_mesh: Meshes,
                 max_iteration=50):
         assert max_iteration > -1
         change = True
         iteration = 0
         loss_mesh = original_mesh.clone()
-        smoothe_verts = loss_mesh.verts_packed().clone()
+        smooth_verts = loss_mesh.verts_packed().clone()
         neighbors = self.compute_neighbors(vertices, faces)
         neighbor_len = torch.IntTensor([len(neighbors[i]) for i in range(len(vertices))])
         neighbor_valences = torch.FloatTensor(
@@ -256,18 +258,18 @@ class MeshExtraction:
                 if i == 0:
                     loss_mesh = Meshes([loss], loss_mesh.faces_list())
 
-            # new_vals = smoothe_verts - (1/d).unsqueeze(1) * loss
+            # new_vals = smooth_verts - (1/d).unsqueeze(1) * loss
             # difference = torch.sqrt(torch.sum(torch.pow(original_mesh.verts_packed() - new_vals, 2), dim=1))
 
             for i, v in enumerate(vertices):
-                new_val = smoothe_verts[i] - 1 / d[i] * loss[i]
+                new_val = smooth_verts[i] - (1 / d[i] * loss[i])
                 difference = torch.dist(original_mesh.verts_packed()[i], new_val)
                 if difference < 1 + diffusion.get_value(vertices[i]):
-                    smoothe_verts[i] = new_val
+                    smooth_verts[i] = new_val
                     change = True
 
-            loss_mesh = Meshes([smoothe_verts], original_mesh.faces_list())
-        return smoothe_verts
+            loss_mesh = Meshes([smooth_verts], original_mesh.faces_list())
+        return smooth_verts
 
     def compute_neighbors(self, vertices: np.ndarray, faces: np.ndarray) -> List[Set]:
         neighbors = [set() for i in vertices]

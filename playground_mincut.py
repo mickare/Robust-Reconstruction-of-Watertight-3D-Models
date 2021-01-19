@@ -15,7 +15,7 @@ from mathlib import Vec3i, Vec3f
 import mesh_extraction
 from model.bunny import FixedBunny
 from model.dragon import Dragon
-from model.model_ply import PlyModelLoader
+from model.bunny import FixedBunny
 from render.cloud_render import CloudRender
 from render.voxel_render import VoxelRender
 from utils import timed
@@ -299,9 +299,6 @@ if __name__ == '__main__':
     print("Loading model")
     with timed("\tTime: "):
         data = FixedBunny.bunny()
-        # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
-        # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
-        # data = PlyModelLoader().load("models/dragon_up/dragonUpRight.conf")
         # data = Dragon().load()
         data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
         model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
@@ -463,7 +460,7 @@ if __name__ == '__main__':
 
             # Smoothing
             pytorch_mesh = mesh_extractor.get_pytorch_mesh()
-            smoothed_vertices = mesh_extractor.smoothe(mesh.get_vertex_array(), triangles, diff, pytorch_mesh)
+            smoothed_vertices = mesh_extractor.smooth(mesh.get_vertex_array(), triangles, diff, pytorch_mesh)
             ren = VoxelRender()
             fig = ren.make_figure()
             verts = smoothed_vertices.cpu().detach().numpy()
