@@ -114,7 +114,7 @@ def fill_components(crust: ChunkGrid[np.bool8], max_components=4) -> Tuple[Chunk
     return components, count
 
 
-def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, reverse_steps=3, max_steps=5):
+def crust_dilation(crust: ChunkGrid[np.bool8], max_components=5, reverse_steps=3, max_steps=5):
     assert max_steps > 0
     max_count = 0
     dilation_step = 0
@@ -146,10 +146,24 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=4, reverse_steps=3
     step = max(0, dilation_step - reverse_steps)
     crust = crusts_all[step]
     components = components_all[step]
-    # crust = crusts_all[-1]
-    # components = components_all[-1]
+    count_prev = counts_all[step]
     crust.cleanup(remove=True)
     components.cleanup(remove=True)
+
+    # Cleanup components and select only the largest component
+    # This will set all other components (0, 3,4,5,...) to be part of crust (1)
+    candidates = dict()
+    candidates[0] = (components == 0).sum()
+    for c in range(3, count_prev):
+        candidates[c] = (components == c).sum()
+
+    winner_index, winner_value = max(list(candidates.items()), key=lambda e: e[1])
+    for cid, cval in candidates.items():
+        if cid != winner_index:
+            selection = components == cid
+            components[selection] = 1  # Make it a crust
+            crust[selection] = True
+
     return crust, components, step
 
 
@@ -308,7 +322,7 @@ if __name__ == '__main__':
 
     print("Dilation")
     with timed("\tTime: "):
-        crust, components, dilation_step = crust_dilation(crust, max_steps=CHUNKSIZE * 2, reverse_steps=3)
+        crust, components, dilation_step = crust_dilation(crust, max_steps=CHUNKSIZE * 2, reverse_steps=10)
         # assert components._fill_value == 2
 
         plot_voxels(components == 0, components, title=f"Initial Dilation")
@@ -354,6 +368,43 @@ if __name__ == '__main__':
         print("Diffusion")
         with timed("\tTime: "):
             diff = diffuse(model, repeat=3)
+
+        print("Plot-Diffusion")
+        with timed("\tTime: "):
+            ren = CloudRender()
+            fig = ren.make_figure()
+
+            # Cut in half
+            diff_mask = (diff != 1.0) & crust
+            half = (np.max(data_pts, axis=0) + np.min(data_pts, axis=0)).astype(int) // 2
+            half_chunk = half // diff_mask.chunk_size
+            half_chunk_split = half[2] % diff_mask.chunk_size
+            for index in list(diff_mask.chunks.keys()):
+                if index[2] > half_chunk[2]:
+                    del diff_mask.chunks[index]
+                elif index[2] == half_chunk[2]:
+                    ch = diff_mask.chunks.get(index)
+                    arr = ch.to_array()
+                    arr[:, :, half_chunk_split:] = False
+                    ch.set_array(arr)
+
+            items = list(diff.items(mask=diff_mask))
+            items.sort(key=lambda e: e[0][2] * 1024 + e[0][1] + e[0][0])
+            points, values = zip(*items)  # type: Sequence[Vec3i], Sequence
+            pts = np.array(points, dtype=np.float32) + 0.5
+
+            fig.add_trace(ren.make_scatter(
+                pts,
+                name="Diffusion",
+                marker=dict(
+                    size=2.0,
+                    opacity=0.7,
+                    colorscale='Viridis',
+                    color=np.array(values)
+                ),
+                mode="markers",
+            ))
+            fig.show()
 
         print("MinCut")
         with timed("\tTime: "):
@@ -417,6 +468,6 @@ if __name__ == '__main__':
             fig = ren.make_figure()
             verts = smoothed_vertices.cpu().detach().numpy()
             faces = torch.cat(pytorch_mesh.faces_list()).cpu().detach().numpy()
-            fig.add_trace(ren.make_mesh(verts, faces, name='Mesh'))
+            fig.add_trace(ren.make_mesh(verts, faces, name='Mesh', flatshading=False))
             fig.add_trace(ren.make_wireframe(verts, faces, name='Wireframe'))
             fig.show()
