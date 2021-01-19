@@ -13,6 +13,7 @@ from filters.dilate import dilate
 from filters.fill import flood_fill_at
 from mathlib import Vec3i, Vec3f
 import mesh_extraction
+from model.bunny import FixedBunny
 from model.dragon import Dragon
 from model.model_ply import PlyModelLoader
 from render.cloud_render import CloudRender
@@ -283,11 +284,11 @@ if __name__ == '__main__':
 
     print("Loading model")
     with timed("\tTime: "):
-        # data = FixedPtsModels.bunny()
+        data = FixedBunny.bunny()
         # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
         # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
         # data = PlyModelLoader().load("models/dragon_up/dragonUpRight.conf")
-        data = Dragon().load()
+        # data = Dragon().load()
         data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
         model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
         model[data_pts] = True
@@ -417,5 +418,5 @@ if __name__ == '__main__':
             verts = smoothed_vertices.cpu().detach().numpy()
             faces = torch.cat(pytorch_mesh.faces_list()).cpu().detach().numpy()
             fig.add_trace(ren.make_mesh(verts, faces, name='Mesh'))
-            fig.add_trace(ren.make_wireframe(mesh, triangles, name='Wireframe'))
+            fig.add_trace(ren.make_wireframe(verts, faces, name='Wireframe'))
             fig.show()
