@@ -262,7 +262,7 @@ class MeshExtraction:
             # difference = torch.sqrt(torch.sum(torch.pow(original_mesh.verts_packed() - new_vals, 2), dim=1))
 
             for i, v in enumerate(vertices):
-                new_val = smooth_verts[i] + (1 / d[i] * loss[i])/neighbor_len[i]
+                new_val = smooth_verts[i] - (1 / d[i] * loss[i])
                 difference = torch.dist(original_mesh.verts_packed()[i], new_val)
                 if difference < 1 + diffusion.get_value(vertices[i]):
                     smooth_verts[i] = new_val
