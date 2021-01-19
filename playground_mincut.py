@@ -417,5 +417,5 @@ if __name__ == '__main__':
             verts = smoothed_vertices.cpu().detach().numpy()
             faces = torch.cat(pytorch_mesh.faces_list()).cpu().detach().numpy()
             fig.add_trace(ren.make_mesh(verts, faces, name='Mesh'))
-            fig.add_trace(ren.make_wireframe(mesh_vertices, triangles, name='Wireframe'))
+            fig.add_trace(ren.make_wireframe(mesh, triangles, name='Wireframe'))
             fig.show()
