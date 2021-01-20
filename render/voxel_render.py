@@ -24,27 +24,32 @@ def _transfer_face(face: ChunkFace, dst: np.ndarray, neighbor: Optional[Chunk]):
 
 
 @numba.njit(inline='always')
-def _empty_faces() -> Tuple[np.ndarray, np.ndarray]:
-    return np.empty((0, 3), dtype=np.int32), np.empty((0, 3), dtype=np.uint32)
+def _empty_faces(vtype=np.int32) -> Tuple[np.ndarray, np.ndarray]:
+    return np.empty((0, 3), dtype=vtype), np.empty((0, 3), dtype=np.uint32)
 
 
-@numba.njit()
-def _reduce_mesh(vertices_faces: Sequence[Tuple[np.ndarray, np.ndarray]]) -> Tuple[np.ndarray, np.ndarray]:
+def reduce_mesh(vertices_faces: Sequence[Tuple[np.ndarray, np.ndarray]], vtype=np.int32) \
+        -> Tuple[np.ndarray, np.ndarray]:
+    # Check if empty
     if len(vertices_faces) == 0:
-        return _empty_faces()
-    fs = []
+        return _empty_faces(vtype=vtype)
+    # Increment face indices and filter empty
     vs = []
+    fs = []
     face_index = 0
-    for f, v in vertices_faces:
-        if len(fs) == 0 or len(vs) == 0:
+    for v, f in vertices_faces:
+        if len(v) == 0 or len(f) == 0:
             continue
+        vs.append(v)
         fs.append(f + face_index)
-        fs.append(v)
         face_index += len(v)
-    if not fs or not vs:
-        return _empty_faces()
+    # Re-check if empty
+    if len(vs) == 0 or len(fs) == 0:
+        return _empty_faces(vtype=vtype)
+    # Stack vertices and faces
     vs2 = np.vstack(vs)
     fs2 = np.vstack(fs)
+    # Remove duplicates
     vs3, inv = np.unique(vs2, return_inverse=True, axis=0)
     fs3 = inv[fs2]
     return vs3, fs3
@@ -72,20 +77,20 @@ def _make_faces_from_delta(delta: np.ndarray, vert: np.ndarray) -> Tuple[np.ndar
     return vertices, faces
 
 
-@numba.njit(parallel=True, fastmath=True)
-def _make_mesh_from_deltas(dx: np.ndarray, dy: np.ndarray, dz: np.ndarray):
-    _vert = np.array([
-        [(0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1)],  # x
-        [(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)],  # y
-        [(0, 0, 0), (0, 1, 0), (1, 0, 0), (1, 1, 0)],  # z
-    ], dtype=np.int32)
-    _faces_front = np.array([(0, 1, 2), (3, 2, 1)], dtype=np.uint32)
-    _faces_back = np.array([(3, 2, 1), (0, 1, 2)], dtype=np.uint32)
-
-    deltas = (dx, dy, dz)
-    result: List[Tuple[np.ndarray, np.ndarray]] = [_make_faces_from_delta(deltas[n], _vert[n]) for n in numba.prange(3)]
-
-    return _reduce_mesh(result)
+# @numba.njit(parallel=True, fastmath=True)
+# def _make_mesh_from_deltas(dx: np.ndarray, dy: np.ndarray, dz: np.ndarray):
+#     _vert = np.array([
+#         [(0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1)],  # x
+#         [(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)],  # y
+#         [(0, 0, 0), (0, 1, 0), (1, 0, 0), (1, 1, 0)],  # z
+#     ], dtype=np.int32)
+#     _faces_front = np.array([(0, 1, 2), (3, 2, 1)], dtype=np.uint32)
+#     _faces_back = np.array([(3, 2, 1), (0, 1, 2)], dtype=np.uint32)
+#
+#     deltas = (dx, dy, dz)
+#     result: List[Tuple[np.ndarray, np.ndarray]] = [_make_faces_from_delta(deltas[n], _vert[n]) for n in numba.prange(3)]
+#
+#     return _reduce_mesh(result)
 
 
 def _clip_face(face0: ChunkFace, dst: np.ndarray):

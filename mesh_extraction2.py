@@ -1,12 +1,17 @@
-import numpy as np
 import enum
-from data.chunks import ChunkGrid, ChunkFace
-from mathlib import Vec3i, Vec3f
 from typing import Tuple, Sequence, List, Set
+
+import numba
+import numpy as np
 import torch
 from pytorch3d.structures import Meshes
 
+from data.chunks import ChunkGrid, ChunkFace
+from mathlib import Vec3i, Vec3f
 from mincut import MinCut
+from render import voxel_render
+
+numba.config.THREADING_LAYER = 'omp'
 
 NodeIndex = Tuple[Vec3i, ChunkFace]
 
@@ -50,15 +55,152 @@ class PolyMesh:
         return vertices
 
 
+@numba.stencil(cval=0)
+def _sum_block222(a):
+    return (a[0, 0, 0] + a[0, 0, 1] + a[0, 1, 0] + a[0, 1, 1] + a[1, 0, 0] + a[1, 0, 1] + a[1, 1, 0] + a[1, 1, 1])
+
+
+@numba.njit()
+def _select_starting_voxel(block: np.ndarray):
+    for x, y, z in np.ndindex((2, 2, 2)):
+        if block[x, y, z]:
+            return x, y, z
+    raise RuntimeError("Block is not valid")
+
+
+@numba.njit(fastmath=True)
+def _iter_block_neighbors(pos: Vec3i):
+    x0, y0, z0 = pos
+    x1, y1, z1 = (x0 + 1) % 2, (y0 + 1) % 2, (z0 + 1) % 2
+    # Order is important - first the direct ones
+    yield x1, y0, z0
+    yield x0, y1, z0
+    yield x0, y0, z1
+    # # then  the edge neighbors
+    yield x0, y1, z1
+    yield x1, y0, z1
+    yield x1, y1, z0
+
+
+@numba.njit(fastmath=True, inline='always')
+def _distance_block(a: Vec3i, b: Vec3i):
+    return abs(b[0] - a[0]) + abs(b[1] - a[1]) + abs(b[2] - a[2])
+
+
+@numba.njit(fastmath=True, inline='always')
+def _is_block_neighbor(a: Vec3i, b: Vec3i):
+    s = _distance_block(a, b)
+    return s == 1 or s == 2  # Direct neighbor or edge neighbor; but not identity and not diagonal!
+
+
+@numba.stencil(cval=0)
+def _connectivity(a):
+    return (
+            (a[0, 0, 1] + a[0, 0, -1] + a[0, 1, 0] + a[0, -1, 0] + a[1, 0, 0] + a[-1, 0, 0]) * 3
+            + a[0, 1, 1] + a[0, -1, 1] + a[0, 1, -1] + a[0, -1, -1]
+            + a[1, 0, 1] + a[-1, 0, 1] + a[1, 0, -1] + a[-1, 0, -1]
+            + a[1, 1, 0] + a[-1, 1, 0] + a[1, -1, 0] + a[-1, -1, 0]
+    )
+
+
+@numba.njit()
+def _visit_block(block: np.ndarray, visited: List[Vec3i], pos: Vec3i):
+    for pos1 in _iter_block_neighbors(pos):
+        if block[pos1] and pos1 not in visited:
+            visited.append(pos1)
+            _visit_block(block, visited, pos1)
+            break
+
+
+@numba.njit(fastmath=True)
+def _make_face(block: np.ndarray):
+    assert np.sum(block) >= 3
+    pos0 = _select_starting_voxel(block)
+
+    # Collect polygon edges
+    visited: List[Vec3i] = [pos0]
+    _visit_block(block, visited, pos0)
+
+    len_visited = len(visited)
+
+    if len_visited <= 2:
+        return np.empty((0, 3), dtype=np.int32), np.empty((0, 3), dtype=np.uint32)
+
+    # # Check and sort the voxels to a clean face
+    # for i in range(len_visited - 1):
+    #     if _is_block_neighbor(visited[i], visited[i + 1]):
+    #         continue
+    #     else:
+    #         # Try to swap with later one
+    #         ok = False
+    #         for j in range(i + 2, len_visited):
+    #             if _is_block_neighbor(visited[i], visited[j]):
+    #                 tmp = visited[i + 1]
+    #                 visited[i + 1] = visited[j]
+    #                 visited[j] = tmp
+    #                 ok = True
+    #                 break
+    #         assert ok  # Reached end of loop without finding a partner! :(
+
+    # if not _is_block_neighbor(pos0, visited[-1]):
+    #     # Bad choice of first voxel, so let's try to rotate the batch
+    #     assert _is_block_neighbor(visited[1], visited[-1])
+    #     visited = visited[1:]
+    #     visited.append(pos0)
+
+    ########################################
+    # Triangle fan
+
+    # Construct vertices and faces
+    verts = np.array(visited[:len_visited], dtype=np.int32)
+    faces = np.zeros((len_visited - 2, 3), dtype=np.uint32)
+    for i in range(len_visited - 2):
+        faces[i] = (i, i + 1, i + 2)
+    return verts, faces
+
+
+@numba.njit(fastmath=True)
+def _extract_polygon_edges(sopt: np.ndarray) -> List[Tuple[np.ndarray, np.ndarray]]:
+    detected = _sum_block222(sopt)
+    result: List[Tuple[np.ndarray, np.ndarray]] = []
+    for pos in np.argwhere(detected >= 3):
+        x, y, z = pos
+        v, f = _make_face(sopt[x:x + 2, y:y + 2, z:z + 2])
+        if len(v) > 0:
+            result.append((v + pos, f))
+
+    # Fallback, empty result
+    return result
+
+
 class MeshExtraction:
     def __init__(self, mincut: MinCut):
         self.segment0, self.segment1 = mincut.grid_segments()
         self.s_opt = self.segment0 & self.segment1
-        self.segments = mincut.segments()
-        self.nodes_index = mincut.nodes_index
+        self.mincut = mincut
         self.mesh = PolyMesh()
 
     def extract_mesh(self):
+        sopt = self.s_opt
+        # Clean chunk padding
+        sopt.cleanup(remove=True)
+        sopt.pad_chunks(1)
+
+        size = sopt.chunk_size
+
+        result: List[Tuple[np.ndarray, np.ndarray]] = []
+        for index in sopt.chunks.keys():
+            block = sopt.get_block_at(index, (2, 2, 2), offset=(0, 0, 0))
+            pad = sopt.block_to_array(block)
+            v, f = voxel_render.reduce_mesh(_extract_polygon_edges(pad[:size + 1, :size + 1, :size + 1]))
+            v += np.asanyarray(index, dtype=np.int32) * size
+            result.append((v, f))
+
+        # unpack results
+        vs, fs = voxel_render.reduce_mesh(result)
+        return vs.astype(dtype=np.float32) + 0.5, fs
+
+    def extract_mesh_old(self):
         block = self.get_block(self.get_first_block())
         block_num = 0
         invalid_faces = 0

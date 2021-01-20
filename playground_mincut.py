@@ -1,25 +1,23 @@
 from typing import Optional, Tuple, Sequence
 
-import maxflow
 import numba
 import numpy as np
-import tqdm
+import pytorch3d.structures
+import torch
 from scipy import ndimage
 
-from crust_fix import crust_fix
+import mesh_extraction2 as mesh_extraction
+from crust_fix2 import crust_fix
 from data.chunks import ChunkGrid, Chunk
-from data.faces import ChunkFace
 from filters.dilate import dilate
 from filters.fill import flood_fill_at
 from mathlib import Vec3i, Vec3f
-import mesh_extraction
+from mincut import MinCut
 from model.bunny import FixedBunny
 from model.dragon import Dragon
-from model.bunny import FixedBunny
 from render.cloud_render import CloudRender
 from render.voxel_render import VoxelRender
 from utils import timed
-import torch
 
 numba.config.THREADING_LAYER = 'omp'
 
@@ -152,9 +150,17 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=5, reverse_steps=3
 
     # Cleanup components and select only the largest component
     # This will set all other components (0, 3,4,5,...) to be part of crust (1)
+    cleanup_components(crust, components, count_prev)
+
+    return crust, components, step
+
+
+def cleanup_components(crust: ChunkGrid[np.bool8], components: ChunkGrid[np.int8], count: int):
+    # Cleanup components and select only the largest component
+    # This will set all other components (0, 3,4,5,...) to be part of crust (1)
     candidates = dict()
     candidates[0] = (components == 0).sum()
-    for c in range(3, count_prev):
+    for c in range(3, count):
         candidates[c] = (components == c).sum()
 
     winner_index, winner_value = max(list(candidates.items()), key=lambda e: e[1])
@@ -163,8 +169,6 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=5, reverse_steps=3
             selection = components == cid
             components[selection] = 1  # Make it a crust
             crust[selection] = True
-
-    return crust, components, step
 
 
 # =====================================================================
@@ -207,86 +211,75 @@ def diffuse(model: ChunkGrid[bool], repeat=1):
     return result
 
 
-# =====================================================================
-# MinCut
-# =====================================================================
-
-
-def mincut(diff: ChunkGrid[float], crust: ChunkGrid[bool], crust_outer: ChunkGrid[bool],
-           crust_inner: ChunkGrid[bool], s=4, a=1e-20):
-    # weights = ChunkGrid(diff.chunk_size, dtype=float, fill_value=0)
-    weights = (diff ** s) + a
-    weights[~crust] = -1
-    weights.cleanup(remove=True)
-
-    NodeIndex = Tuple[Vec3i, ChunkFace]
-    CF = ChunkFace
-
-    def get_node(pos: Vec3i, face: ChunkFace) -> NodeIndex:
-        """Basically forces to have only positive-direction faces"""
-        if face % 2 == 0:
-            return pos, face
-        else:
-            return tuple(np.add(pos, face.direction(), dtype=int)), face.flip()
-
-    voxels = {tuple(p): w for p, w in weights.items(mask=crust) if w >= 0}
-    nodes = list(set(get_node(p, f) for p in voxels.keys() for f in ChunkFace))
-    nodes_index = {f: n for n, f in enumerate(nodes)}
-
-    nodes_count = len(nodes)
-
-    graph = maxflow.Graph[float](nodes_count, nodes_count)
-    g_nodes = graph.add_nodes(len(nodes))
-
-    # visited: Set[Tuple[Tuple[Vec3i, CF], Tuple[Vec3i, CF]]] = set()
-    for vPos, w in tqdm.tqdm(voxels.items(), total=len(voxels), desc="Linking Faces"):
-        iN = nodes_index[get_node(vPos, CF.NORTH)]
-        iS = nodes_index[get_node(vPos, CF.SOUTH)]
-        iT = nodes_index[get_node(vPos, CF.TOP)]
-        iB = nodes_index[get_node(vPos, CF.BOTTOM)]
-        iE = nodes_index[get_node(vPos, CF.EAST)]
-        iW = nodes_index[get_node(vPos, CF.WEST)]
-        for f, o in [
-            (iN, iE), (iN, iW), (iN, iT), (iN, iB),
-            (iS, iE), (iS, iW), (iS, iT), (iS, iB),
-            (iT, iE), (iT, iW), (iB, iE), (iB, iW)
-        ]:  # type: ChunkFace
-            graph.add_edge(f, o, w, w)
-
-    # Source
-    for vPos in tqdm.tqdm(list(crust_outer.where()), desc="Linking Source"):
-        for f in ChunkFace:  # type: ChunkFace
-            fNode = get_node(tuple(vPos), f)
-            fIndex = nodes_index.get(fNode, None)
-            if fIndex is not None:
-                graph.add_tedge(fIndex, 10000, 0)
-
-    # Sink
-    for vPos in tqdm.tqdm(list(crust_inner.where()), desc="Linking Sink"):
-        for f in ChunkFace:  # type: ChunkFace
-            fNode = get_node(tuple(vPos), f)
-            fIndex = nodes_index.get(fNode, None)
-            if fIndex is not None:
-                graph.add_tedge(fIndex, 0, 10000)
-
-    flow = graph.maxflow()
-    segments = graph.get_grid_segments(np.arange(nodes_count))
-
-    def to_voxel(nodeIndex: NodeIndex) -> Sequence[Vec3i]:
-        pos, face = nodeIndex
-        return [
-            pos,
-            np.asarray(face.direction()) * (face.flip() % 2) + pos
-        ]
-
-    segment0 = ChunkGrid(crust.chunk_size, bool, False)
-    segment0[[p for node, s in zip(nodes, segments) if s == False
-              for p in to_voxel(node)]] = True
-    segment1 = ChunkGrid(crust.chunk_size, bool, False)
-    segment1[[p for node, s in zip(nodes, segments) if s == True
-              for p in to_voxel(node)]] = True
-
-    return segment0, segment1, segments, voxels, nodes_index
+#
+# def mincut(diff: ChunkGrid[float], crust: ChunkGrid[bool], crust_outer: ChunkGrid[bool],
+#            crust_inner: ChunkGrid[bool], s=4, a=1e-20):
+#     # weights = ChunkGrid(diff.chunk_size, dtype=float, fill_value=0)
+#     weights = (diff ** s) + a
+#     weights[~crust] = -1
+#     weights.cleanup(remove=True)
+#
+#     NodeIndex = Tuple[Vec3i, ChunkFace]
+#     CF = ChunkFace
+#
+#     def get_node(pos: Vec3i, face: ChunkFace) -> NodeIndex:
+#         """Basically forces to have only positive-direction faces"""
+#         if face % 2 == 0:
+#             return pos, face
+#         else:
+#             return tuple(np.add(pos, face.direction(), dtype=int)), face.flip()
+#
+#     voxels = {tuple(p): w for p, w in weights.items(mask=crust) if w >= 0}
+#     nodes = list(set(get_node(p, f) for p in voxels.keys() for f in ChunkFace))
+#     nodes_index = {f: n for n, f in enumerate(nodes)}
+#
+#     nodes_count = len(nodes)
+#
+#     graph = maxflow.Graph[float](nodes_count, nodes_count)
+#     g_nodes = graph.add_nodes(len(nodes))
+#
+#     # visited: Set[Tuple[Tuple[Vec3i, CF], Tuple[Vec3i, CF]]] = set()
+#     for vPos, w in tqdm.tqdm(voxels.items(), total=len(voxels), desc="Linking Faces"):
+#         iN = nodes_index[get_node(vPos, CF.NORTH)]
+#         iS = nodes_index[get_node(vPos, CF.SOUTH)]
+#         iT = nodes_index[get_node(vPos, CF.TOP)]
+#         iB = nodes_index[get_node(vPos, CF.BOTTOM)]
+#         iE = nodes_index[get_node(vPos, CF.EAST)]
+#         iW = nodes_index[get_node(vPos, CF.WEST)]
+#         for f, o in [
+#             (iN, iE), (iN, iW), (iN, iT), (iN, iB),
+#             (iS, iE), (iS, iW), (iS, iT), (iS, iB),
+#             (iT, iE), (iT, iW), (iB, iE), (iB, iW)
+#         ]:  # type: ChunkFace
+#             graph.add_edge(f, o, w, w)
+#
+#     # Source
+#     for vPos in tqdm.tqdm(list(crust_outer.where()), desc="Linking Source"):
+#         for f in ChunkFace:  # type: ChunkFace
+#             fNode = get_node(tuple(vPos), f)
+#             fIndex = nodes_index.get(fNode, None)
+#             if fIndex is not None:
+#                 graph.add_tedge(fIndex, 10000, 0)
+#
+#     # Sink
+#     for vPos in tqdm.tqdm(list(crust_inner.where()), desc="Linking Sink"):
+#         for f in ChunkFace:  # type: ChunkFace
+#             fNode = get_node(tuple(vPos), f)
+#             fIndex = nodes_index.get(fNode, None)
+#             if fIndex is not None:
+#                 graph.add_tedge(fIndex, 0, 10000)
+#
+#     flow = graph.maxflow()
+#     segments = graph.get_grid_segments(np.arange(nodes_count))
+#
+#     segment0 = ChunkGrid(crust.chunk_size, bool, False)
+#     segment0[[p for node, s in zip(nodes, segments) if s == False
+#               for p in to_voxel(node)]] = True
+#     segment1 = ChunkGrid(crust.chunk_size, bool, False)
+#     segment1[[p for node, s in zip(nodes, segments) if s == True
+#               for p in to_voxel(node)]] = True
+#
+#     return segment0, segment1, segments, voxels, nodes_index
 
 
 # =====================================================================
@@ -298,8 +291,8 @@ if __name__ == '__main__':
 
     print("Loading model")
     with timed("\tTime: "):
-        data = FixedBunny.bunny()
-        # data = Dragon().load()
+        # data = FixedBunny.bunny()
+        data = Dragon().load()
         data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
         model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
         model[data_pts] = True
@@ -319,14 +312,14 @@ if __name__ == '__main__':
 
     print("Dilation")
     with timed("\tTime: "):
-        crust, components, dilation_step = crust_dilation(crust, max_steps=CHUNKSIZE * 2, reverse_steps=10)
+        crust, components, dilation_step = crust_dilation(crust, max_steps=CHUNKSIZE * 2, reverse_steps=3)
         # assert components._fill_value == 2
 
         plot_voxels(components == 0, components, title=f"Initial Dilation")
         crust_dilate = dilate(crust)
         outer_fill = components == 2
         crust_outer = outer_fill & crust_dilate
-        crust_inner = (components != 1) & (components != 2) & crust_dilate
+        crust_inner = (components == 3) & crust_dilate
 
         assert crust_dilate._fill_value == False
         assert outer_fill._fill_value == True
@@ -338,12 +331,12 @@ if __name__ == '__main__':
            Then for each voxel compute a normal cone and mark the voxel as inner component when the cone angle is greater than 90°.
            """
     print("Crust-Fix")
-    # with timed("\tTime: "):
-    #     crust_inner |= crust_fix(
-    #         crust, outer_fill, crust_outer, crust_inner,
-    #         min_distance=dilation_step,
-    #         data_pts=plot_model
-    #     )
+    with timed("\tTime: "):
+        crust_inner |= crust_fix(
+            crust, outer_fill, crust_outer, crust_inner,
+            min_distance=dilation_step,
+            data_pts=plot_model
+        )
     #     # crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
 
     """
@@ -405,7 +398,8 @@ if __name__ == '__main__':
 
         print("MinCut")
         with timed("\tTime: "):
-            segment0, segment1, segments, voxels, nodes_index = mincut(diff, crust, crust_outer, crust_inner)
+            mincut = MinCut(diff, crust, crust_outer, crust_inner)
+            segment0, segment1 = mincut.grid_segments()
             thincrust = segment0 & segment1
 
         print("Render")
@@ -432,16 +426,15 @@ if __name__ == '__main__':
             # Build new crust
             crust = dilate(dilate(thincrust.split(2), steps=1) | dilate(model, steps=3))
 
-            components, count = fill_components(crust, max_components=2)
-            outer_fill = components == 2
+            components, count = fill_components(crust, max_components=5)
+            cleanup_components(crust, components, count)
 
-            # Make a clean padding
+            outer_fill = (components == 2)
             outer_fill.cleanup(remove=True)
-            outer_fill.pad_chunks(1)
 
             crust_dilate = dilate(crust)
             crust_outer = outer_fill & crust_dilate
-            crust_inner = (components != 1) & (components != 2) & crust_dilate
+            crust_inner = (components == 3) & crust_dilate
 
             dilation_step = 2
 
@@ -454,17 +447,25 @@ if __name__ == '__main__':
         print("Extract mesh")
         with timed("\tTime: "):
             # Extraction
-            mesh_extractor = mesh_extraction.MeshExtraction(segment0, segment1, segments, nodes_index)
-            mesh = mesh_extractor.extract_mesh()
-            triangles = mesh_extractor.make_triangles()
+            mesh_extractor = mesh_extraction.MeshExtraction(mincut)
+            vertices, faces = mesh_extractor.extract_mesh()
 
-            # Smoothing
-            pytorch_mesh = mesh_extractor.get_pytorch_mesh()
-            smoothed_vertices = mesh_extractor.smooth(mesh.get_vertex_array(), triangles, diff, pytorch_mesh)
             ren = VoxelRender()
             fig = ren.make_figure()
+            fig.add_trace(ren.make_mesh(vertices, faces, name='Mesh', flatshading=False))
+            fig.add_trace(ren.make_wireframe(vertices, faces, name='Wireframe'))
+            fig.show()
+
+            # Smoothing
+            pytorch_mesh = pytorch3d.structures.Meshes(verts=[torch.FloatTensor(vertices)],
+                                                       faces=[torch.LongTensor(faces)])
+
+            smoothed_vertices = mesh_extractor.smooth(vertices, faces, diff, pytorch_mesh)
             verts = smoothed_vertices.cpu().detach().numpy()
             faces = torch.cat(pytorch_mesh.faces_list()).cpu().detach().numpy()
+
+            ren = VoxelRender()
+            fig = ren.make_figure()
             fig.add_trace(ren.make_mesh(verts, faces, name='Mesh', flatshading=False))
             fig.add_trace(ren.make_wireframe(verts, faces, name='Wireframe'))
             fig.show()
