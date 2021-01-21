@@ -226,29 +226,29 @@ def crust_fix(crust: ChunkGrid[np.bool8],
         nfield[field_reset_mask] = 0
         nfield.cleanup(remove=True)
 
-    print("\tRender Normal Field: ")
-    with timed("\t\tTime: "):
-
-        markers_crust = np.array(
-            [v for p, n in nfield.items(mask=crust) for v in (p, p + n, (np.nan, np.nan, np.nan))],
-            dtype=np.float32) + 0.5
-        markers_outer = np.array(
-            [v for p, n in nfield.items(mask=crust_outer) for v in (p, p + n, (np.nan, np.nan, np.nan))],
-            dtype=np.float32) + 0.5
-        markers_outer_tips = np.array(
-            [p + n for p, n in nfield.items(mask=crust_outer)],
-            dtype=np.float32) + 0.5
-
-        ren = CloudRender()
-        fig = ren.make_figure(title="Crust-Fix: Normal Field")
-        fig.add_trace(ren.make_scatter(markers_outer, marker=dict(opacity=0.5, ), mode="lines", name="Start normal"))
-        fig.add_trace(ren.make_scatter(markers_outer_tips, marker=dict(size=1, symbol='x'), name="Start normal end"))
-        fig.add_trace(ren.make_scatter(markers_crust, marker=dict(opacity=0.5, ), mode="lines", name="Normal field"))
-        if data_pts is not None:
-            fig.add_trace(ren.make_scatter(data_pts, opacity=0.1, size=1, name='Model'))
-        if export_path:
-            fig.write_html(os.path.join(export_path, "normal_field.html"))
-        fig.show()
+    # print("\tRender Normal Field: ")
+    # with timed("\t\tTime: "):
+    #
+    #     markers_crust = np.array(
+    #         [v for p, n in nfield.items(mask=crust) for v in (p, p + n, (np.nan, np.nan, np.nan))],
+    #         dtype=np.float32) + 0.5
+    #     markers_outer = np.array(
+    #         [v for p, n in nfield.items(mask=crust_outer) for v in (p, p + n, (np.nan, np.nan, np.nan))],
+    #         dtype=np.float32) + 0.5
+    #     markers_outer_tips = np.array(
+    #         [p + n for p, n in nfield.items(mask=crust_outer)],
+    #         dtype=np.float32) + 0.5
+    #
+    #     ren = CloudRender()
+    #     fig = ren.make_figure(title="Crust-Fix: Normal Field")
+    #     fig.add_trace(ren.make_scatter(markers_outer, marker=dict(opacity=0.5, ), mode="lines", name="Start normal"))
+    #     fig.add_trace(ren.make_scatter(markers_outer_tips, marker=dict(size=1, symbol='x'), name="Start normal end"))
+    #     fig.add_trace(ren.make_scatter(markers_crust, marker=dict(opacity=0.5, ), mode="lines", name="Normal field"))
+    #     if data_pts is not None:
+    #         fig.add_trace(ren.make_scatter(data_pts, opacity=0.1, size=1, name='Model'))
+    #     if export_path:
+    #         fig.write_html(os.path.join(export_path, "normal_field.html"))
+    #     fig.show()
 
     print("\tNormal cone: ")
     with timed("\t\tTime: "):
