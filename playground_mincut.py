@@ -6,7 +6,7 @@ import pytorch3d.structures
 import torch
 from scipy import ndimage
 
-import mesh_extraction2 as mesh_extraction
+import mesh_extraction
 from crust_fix2 import crust_fix
 from data.chunks import ChunkGrid, Chunk
 from filters.dilate import dilate
@@ -318,7 +318,8 @@ if __name__ == '__main__':
 
     print("Dilation")
     with timed("\tTime: "):
-        crust, components, dilation_step = crust_dilation(crust, max_steps=dilations_max, reverse_steps=dilations_reverse)
+        crust, components, dilation_step = crust_dilation(crust, max_steps=dilations_max,
+                                                          reverse_steps=dilations_reverse)
         # assert components._fill_value == 2
 
         plot_voxels(components == 0, components, title=f"Initial Dilation")
