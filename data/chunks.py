@@ -773,11 +773,12 @@ class ChunkGrid(Generic[V]):
 
         pos = np.asarray(pos, dtype=int)
         assert pos.ndim == 2 and pos.shape[1] == 3
-        cind, cinv = np.unique(pos // self._chunk_size, axis=0, return_inverse=True)
+        csize = self._chunk_size
+        cind, cinv = np.unique(pos // csize, axis=0, return_inverse=True)
         result = np.zeros(len(cinv), dtype=self._dtype)
         for n, i in enumerate(cind):
             pind = __np_argwhere(cinv == n).flatten()
-            cpos = pos[pind]
+            cpos = pos[pind] % csize
             chunk = __self_ensure_chunk_at_index(i, insert=False)
             result[pind] = __chunk_to_array(chunk)[tuple(cpos.T)]
         return result
