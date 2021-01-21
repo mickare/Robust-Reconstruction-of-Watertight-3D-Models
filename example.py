@@ -24,7 +24,7 @@ example_config: Dict[Example, Dict] = {
         dilations_reverse=1
     ),
     Example.Bunny: dict(
-        dilations_max=20,
+        dilations_max=30,
         dilations_reverse=3
     ),
     Example.Dragon: dict(

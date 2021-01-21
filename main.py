@@ -7,6 +7,7 @@ import pytorch3d.structures
 import torch
 
 import mesh_extraction
+from crust_fix import crust_fix
 from data.chunks import ChunkGrid
 from example import Example, example_config, example_load
 from filters.dilate import dilate
@@ -25,8 +26,9 @@ numba.config.THREADING_LAYER = 'omp'
 
 CHUNKSIZE = 16
 RESOLUTION_INIT = 64
-example = Example.Dog
+example = Example.BunnyFixed
 STEPS = 5
+APPROX_MEDIAL_AXIS = True
 
 if __name__ == '__main__':
     resolution = RESOLUTION_INIT
@@ -74,23 +76,24 @@ if __name__ == '__main__':
         assert crust_inner._fill_value == False
 
     """
-           Approximate Voxel near Medial Axis, by propagating a Normal field inwards.
-           Then for each voxel compute a normal cone and mark the voxel as inner component when the cone angle is greater than 90°.
-           """
-    print("Crust-Fix")
-    # with timed("\tTime: "):
-    #     crust_inner |= crust_fix(
-    #         crust, outer_fill, crust_outer, crust_inner,
-    #         min_distance=dilation_step,
-    #         data_pts=plot_model
-    #     )
-    #     # crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
-
-    """
     Increase resolution and make the crust_fixmesh approximation finer
     """
     for resolution_step in range(0, STEPS):
         print(f"RESOLUTION STEP: {resolution_step}")
+
+        if APPROX_MEDIAL_AXIS:
+            """
+            Approximate Voxel near Medial Axis, by propagating a Normal field inwards.
+            Then for each voxel compute a normal cone and mark the voxel as inner component when the cone angle is greater than 90°.
+            """
+            print("Crust-Fix")
+            with timed("\tTime: "):
+                crust_inner |= crust_fix(
+                    crust, outer_fill, crust_outer, crust_inner,
+                    min_distance=dilation_step,
+                    data_pts=plot_model
+                )
+            #     # crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
 
         print("Render Crust")
         with timed("\tTime: "):
@@ -172,6 +175,7 @@ if __name__ == '__main__':
 
             # Build new crust
             crust = dilate(dilate(thincrust.split(2), steps=1) | dilate(model, steps=3))
+            crust.cleanup(remove=True)
 
             components, count = fill_components(crust, max_components=5)
             cleanup_components(crust, components, count)
@@ -182,6 +186,9 @@ if __name__ == '__main__':
             crust_dilate = dilate(crust)
             crust_outer = outer_fill & crust_dilate
             crust_inner = (components == 3) & crust_dilate
+
+            crust_outer.cleanup(remove=True)
+            crust_inner.cleanup(remove=True)
 
             dilation_step = 2
 

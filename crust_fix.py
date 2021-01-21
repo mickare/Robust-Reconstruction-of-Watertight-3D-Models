@@ -269,7 +269,7 @@ def crust_fix(crust: ChunkGrid[np.bool8],
         # Remove artifacts where the inner and outer crusts are touching
         artifacts_fix = outer_fill.copy().pad_chunks(1)
         artifacts_fix.fill_value = False
-        artifacts_fix = ~dilate(artifacts_fix, steps=max(1, min_distance) + 1) & ~outer_fill
+        artifacts_fix = ~dilate(artifacts_fix, steps=max(1, min_distance) + 2) & ~outer_fill
         medial_cleaned = medial & artifacts_fix
         medial_cleaned.cleanup(remove=True)
 

@@ -20,7 +20,9 @@ class FixedBunny:
             (-0.018, ymin, 0.045),
             (-0.011, ymin, 0.045),
         ]
-        return base0, base1, base2, base3
+        base4 = FixedBunny.yplate(ymin, (-0.06, 0.023), (-0.05, 0.04), res=res)
+        base5 = FixedBunny.yplate(ymin, (-0.065, 0.0), (-0.05, 0.013), res=res)
+        return base0, base1, base2, base3, base4, base5
 
     @classmethod
     def bunny(cls):
@@ -50,4 +52,7 @@ if __name__ == '__main__':
     ren = CloudRender()
     fig = ren.make_figure()
     fig.add_trace(ren.make_scatter(data))
+    for b in FixedBunny._bunny_fix_baseplate(data):
+        pts = np.asanyarray(b)
+        fig.add_trace(ren.make_scatter(pts))
     fig.show()
