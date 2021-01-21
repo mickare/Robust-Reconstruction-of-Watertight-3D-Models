@@ -8,7 +8,6 @@ from data.chunks import ChunkGrid
 from data.faces import ChunkFace
 from make_crust import scale_model, get_crust, get_diffusion
 from mathlib import Vec3i
-from model.model_pts import FixedPtsModels
 from render.voxel_render import VoxelRender
 
 TVec3i = Tuple[int, int, int]
@@ -92,7 +91,8 @@ if __name__ == '__main__':
     # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
     # data = PlyModelLoader().load("models/dragon_stand/dragonStandRight.conf")
     # data = MeshModelLoader(samples=30000, noise=0.1).load("models/cat/cat_reference.obj")
-    data = FixedPtsModels.bunny()
+    from model.bunny import FixedBunny
+    data = FixedBunny.bunny()
 
     num_revert_steps, max_color = 5, 3  # bunny
     # num_revert_steps, max_color = 5, 3  # dragon
