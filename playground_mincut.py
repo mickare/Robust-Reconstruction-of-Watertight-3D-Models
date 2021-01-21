@@ -291,8 +291,14 @@ if __name__ == '__main__':
 
     print("Loading model")
     with timed("\tTime: "):
-        # data = FixedBunny.bunny()
-        data = Dragon().load()
+        data = FixedBunny.bunny()
+        dilations_max = 5
+        dilations_reverse = 1
+
+        # data = Dragon().load()
+        # dilations_max = 20
+        # dilations_reverse = 3
+
         data_pts, data_offset, data_scale = scale_model(data, resolution=resolution)
         model: ChunkGrid[np.bool8] = ChunkGrid(CHUNKSIZE, dtype=np.bool8, fill_value=np.bool8(False))
         model[data_pts] = True
@@ -312,7 +318,7 @@ if __name__ == '__main__':
 
     print("Dilation")
     with timed("\tTime: "):
-        crust, components, dilation_step = crust_dilation(crust, max_steps=CHUNKSIZE * 2, reverse_steps=3)
+        crust, components, dilation_step = crust_dilation(crust, max_steps=dilations_max, reverse_steps=dilations_reverse)
         # assert components._fill_value == 2
 
         plot_voxels(components == 0, components, title=f"Initial Dilation")
@@ -331,12 +337,12 @@ if __name__ == '__main__':
            Then for each voxel compute a normal cone and mark the voxel as inner component when the cone angle is greater than 90°.
            """
     print("Crust-Fix")
-    with timed("\tTime: "):
-        crust_inner |= crust_fix(
-            crust, outer_fill, crust_outer, crust_inner,
-            min_distance=dilation_step,
-            data_pts=plot_model
-        )
+    # with timed("\tTime: "):
+    #     crust_inner |= crust_fix(
+    #         crust, outer_fill, crust_outer, crust_inner,
+    #         min_distance=dilation_step,
+    #         data_pts=plot_model
+    #     )
     #     # crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
 
     """
@@ -454,13 +460,16 @@ if __name__ == '__main__':
             fig = ren.make_figure()
             fig.add_trace(ren.make_mesh(vertices, faces, name='Mesh', flatshading=False))
             fig.add_trace(ren.make_wireframe(vertices, faces, name='Wireframe'))
+            fig.update_layout(showlegend=True)
             fig.show()
 
+        print("Smoothing mesh")
+        with timed("\tTime: "):
             # Smoothing
             pytorch_mesh = pytorch3d.structures.Meshes(verts=[torch.FloatTensor(vertices)],
                                                        faces=[torch.LongTensor(faces)])
 
-            smoothed_vertices = mesh_extractor.smooth(vertices, faces, diff, pytorch_mesh)
+            smoothed_vertices = mesh_extraction.Smoothing().smooth(vertices, faces, diff, pytorch_mesh)
             verts = smoothed_vertices.cpu().detach().numpy()
             faces = torch.cat(pytorch_mesh.faces_list()).cpu().detach().numpy()
 
@@ -468,4 +477,5 @@ if __name__ == '__main__':
             fig = ren.make_figure()
             fig.add_trace(ren.make_mesh(verts, faces, name='Mesh', flatshading=False))
             fig.add_trace(ren.make_wireframe(verts, faces, name='Wireframe'))
+            fig.update_layout(showlegend=True)
             fig.show()

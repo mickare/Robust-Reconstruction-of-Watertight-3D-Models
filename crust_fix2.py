@@ -185,7 +185,7 @@ def crust_fix(crust: ChunkGrid[np.bool8],
 
     print("\tCreate Normals: ")
     with timed("\t\tTime: "):
-        normal_zero = np.zeros(3, dtype=np.float32)
+        # normal_zero = np.zeros(3, dtype=np.float32)
         normal_pos = np.array(list(crust_outer.where()))
         normal_val = np.full((len(normal_pos), 3), 0.0, dtype=np.float32)
         for n, p in enumerate(normal_pos):

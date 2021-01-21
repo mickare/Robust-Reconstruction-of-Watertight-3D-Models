@@ -1,5 +1,5 @@
 import enum
-from typing import Tuple, Sequence, List, Set
+from typing import Tuple, Sequence, List, Set, Dict
 
 import numba
 import numpy as np
@@ -7,6 +7,8 @@ import torch
 from pytorch3d.structures import Meshes
 
 from data.chunks import ChunkGrid, ChunkFace
+from data.faces import CHUNK_DIRECTIONS
+from filters.normals import grid_normals
 from mathlib import Vec3i, Vec3f
 from mincut import MinCut
 from render import voxel_render
@@ -16,160 +18,196 @@ numba.config.THREADING_LAYER = 'omp'
 NodeIndex = Tuple[Vec3i, ChunkFace]
 
 
-class Edge(enum.IntEnum):
-    NORTH = 0
-    SOUTH = 1
-    TOP = 2
-    BOTTOM = 3
-    EAST = 4
-    WEST = 5
-
-    def flip(self) -> "Edge":
-        return Edge((self // 2) * 2 + ((self + 1) % 2))
-
-
-class PolyMesh:
-    def __init__(self):
-        self.vertices = {}
-        self.num_verts = 0
-        self.faces = []
-
-    def add_vertex(self, v: Vec3f) -> int:
-        if tuple(v) in self.vertices:
-            return self.vertices[tuple(v)]
-        else:
-            self.vertices[tuple(v)] = self.num_verts
-            self.num_verts += 1
-            return self.num_verts - 1
-
-    def get_vertex_array(self) -> np.array:
-        vertices = np.zeros((len(self.vertices), 3), dtype=float)
-        for v in self.vertices.keys():
-            vertices[self.vertices[v]] = np.array(v)
-        return vertices
-
-    def get_vertex_list(self) -> list:
-        vertices = [[] for i in self.vertices.keys()]
-        for v in self.vertices.keys():
-            vertices[self.vertices[v]] = list(v)
-        return vertices
-
-
 @numba.stencil(cval=0)
 def _sum_block222(a):
     return (a[0, 0, 0] + a[0, 0, 1] + a[0, 1, 0] + a[0, 1, 1] + a[1, 0, 0] + a[1, 0, 1] + a[1, 1, 0] + a[1, 1, 1])
 
 
+CutEdge = int
+CutEdge_X = 1
+CutEdge_Y = 2
+CutEdge_Z = 4
+CutEdge_NONE = 0
+
+
 @numba.njit()
 def _select_starting_voxel(block: np.ndarray):
-    for x, y, z in np.ndindex((2, 2, 2)):
-        if block[x, y, z]:
-            return x, y, z
+    res = np.argwhere(block)
+    if len(res):
+        return res[0][0], res[0][1], res[0][2]
     raise RuntimeError("Block is not valid")
 
 
 @numba.njit(fastmath=True)
-def _iter_block_neighbors(pos: Vec3i):
-    x0, y0, z0 = pos
-    x1, y1, z1 = (x0 + 1) % 2, (y0 + 1) % 2, (z0 + 1) % 2
-    # Order is important - first the direct ones
-    yield x1, y0, z0
-    yield x0, y1, z0
-    yield x0, y0, z1
-    # # then  the edge neighbors
-    yield x0, y1, z1
-    yield x1, y0, z1
-    yield x1, y1, z0
+def _detect_cut_edges(block: np.ndarray, face_segments: np.ndarray):
+    """
+    Extract the cut edges for each voxel
+    :param block: 2x2x2 boolean array
+    :param face_segments: 2x2x2x6 boolean array
+    :return: 2x2x2 bit-mask array of CutEdge
+    """
+    result = np.zeros((2, 2, 2), dtype=np.int8)
+    for x, y, z in np.ndindex((2, 2, 2)):
+        if block[x, y, z]:
+            fx = ChunkFace.NORTH + x  # Flip when x is 1, works because EnumInt ChunkFace is base 2
+            fy = ChunkFace.TOP + y
+            fz = ChunkFace.EAST + z
+            r = 0
+            # Find cut-edges where the segmentation is different
+            if face_segments[x, y, z, fx] != face_segments[x, y, z, fy]:
+                r |= CutEdge_Z
+            if face_segments[x, y, z, fx] != face_segments[x, y, z, fz]:
+                r |= CutEdge_Y
+            if face_segments[x, y, z, fy] != face_segments[x, y, z, fz]:
+                r |= CutEdge_X
+            result[x, y, z] = r
+    return result
 
 
 @numba.njit(fastmath=True, inline='always')
-def _distance_block(a: Vec3i, b: Vec3i):
-    return abs(b[0] - a[0]) + abs(b[1] - a[1]) + abs(b[2] - a[2])
-
-
-@numba.njit(fastmath=True, inline='always')
-def _is_block_neighbor(a: Vec3i, b: Vec3i):
-    s = _distance_block(a, b)
-    return s == 1 or s == 2  # Direct neighbor or edge neighbor; but not identity and not diagonal!
-
-
-@numba.stencil(cval=0)
-def _connectivity(a):
-    return (
-            (a[0, 0, 1] + a[0, 0, -1] + a[0, 1, 0] + a[0, -1, 0] + a[1, 0, 0] + a[-1, 0, 0]) * 3
-            + a[0, 1, 1] + a[0, -1, 1] + a[0, 1, -1] + a[0, -1, -1]
-            + a[1, 0, 1] + a[-1, 0, 1] + a[1, 0, -1] + a[-1, 0, -1]
-            + a[1, 1, 0] + a[-1, 1, 0] + a[1, -1, 0] + a[-1, -1, 0]
-    )
-
-
-@numba.njit()
-def _visit_block(block: np.ndarray, visited: List[Vec3i], pos: Vec3i):
-    for pos1 in _iter_block_neighbors(pos):
-        if block[pos1] and pos1 not in visited:
-            visited.append(pos1)
-            _visit_block(block, visited, pos1)
-            break
+def _any_edge(edge: int):
+    if edge & CutEdge_X:
+        return CutEdge_X
+    elif edge & CutEdge_Y:
+        return CutEdge_Y
+    elif edge & CutEdge_Z:
+        return CutEdge_Z
+    return 0
 
 
 @numba.njit(fastmath=True)
-def _make_face(block: np.ndarray):
-    assert np.sum(block) >= 3
-    pos0 = _select_starting_voxel(block)
+def _iter_block_neighbors(pos: Vec3i):
+    n = _block_pos_to_idx(pos)
+    for i in range(8):
+        idx = n + i
+        p = _block_idx_to_pos(idx)
+        if _is_block_neighbor(pos, p):
+            yield p
+
+
+@numba.njit(fastmath=True, inline='always')
+def _is_edge_neighbor(edge: int, a: Vec3i, b: Vec3i):
+    idx = edge >> 1
+    return a[idx] == b[idx]
+
+
+@numba.njit(fastmath=True)
+def _block_pos_to_idx(pos: Vec3i) -> int:
+    return pos[0] | pos[1] << 1 | pos[2] << 2
+
+
+@numba.njit(fastmath=True)
+def _block_idx_to_pos(idx: int) -> Vec3i:
+    return (idx & 1, (idx >> 1) & 1, (idx >> 2) & 1)
+
+
+@numba.njit(fastmath=True)
+def _sum_normals(normals: np.ndarray, mask: np.ndarray):
+    result = np.zeros((3,), dtype=np.float32)
+    for x, y, z in np.argwhere(mask):
+        result += normals[x, y, z]
+    return result
+
+
+@numba.njit(fastmath=True)
+def _make_face(block: np.ndarray, cut_edges: np.ndarray, normals: np.ndarray):
+    """
+    Make a face for a 2x2x2 block of the voxels from the mincut graph.
+    The face segments must be also a block with each entry with 6 booleans for each face.
+    :param block: 2x2x2 boolean array
+    :param face_segments: 2x2x2 bit-mask array of CutEdge
+    :return:
+    """
+
+    sopt_union = block & (cut_edges != 0)  # Union Sopt and B
+    if np.sum(sopt_union) < 3:
+        return np.empty((0, 3), dtype=np.int32), np.empty((0, 3), dtype=np.uint32)
 
     # Collect polygon edges
-    visited: List[Vec3i] = [pos0]
-    _visit_block(block, visited, pos0)
+    pos0 = _select_starting_voxel(sopt_union)
+    edge0 = _any_edge(cut_edges[pos0])
+
+    if edge0 == CutEdge_NONE:
+        return np.empty((0, 3), dtype=np.int32), np.empty((0, 3), dtype=np.uint32)
+
+    pos = pos0
+    edge = edge0
+    visited: List[Vec3i] = [pos]
+    while True:
+        edge1 = _any_edge(cut_edges[pos] & ~edge)  # Find the second cut edge f in v
+        assert edge1 != CutEdge_NONE
+        found = False
+        for repeat in range(2):
+            for pos1 in _iter_block_neighbors(pos):  # Find the neigboring voxel w
+                if repeat == 1 or pos1 not in visited:
+                    if _is_edge_neighbor(edge1, pos, pos1):
+                        if block[pos1] and cut_edges[pos1] & edge1:  # that shares the cut-edge
+                            visited.append(pos)  # generate a polygon edge from v to w
+                            pos = pos1  # v <- w
+                            edge = edge1  # e <- f
+                            found = True
+                            break
+            if found:
+                break
+
+        if not found or pos == pos0:  # loop until first voxel is reached again
+            break
 
     len_visited = len(visited)
-
     if len_visited <= 2:
         return np.empty((0, 3), dtype=np.int32), np.empty((0, 3), dtype=np.uint32)
 
-    # # Check and sort the voxels to a clean face
-    # for i in range(len_visited - 1):
-    #     if _is_block_neighbor(visited[i], visited[i + 1]):
-    #         continue
-    #     else:
-    #         # Try to swap with later one
-    #         ok = False
-    #         for j in range(i + 2, len_visited):
-    #             if _is_block_neighbor(visited[i], visited[j]):
-    #                 tmp = visited[i + 1]
-    #                 visited[i + 1] = visited[j]
-    #                 visited[j] = tmp
-    #                 ok = True
-    #                 break
-    #         assert ok  # Reached end of loop without finding a partner! :(
-
-    # if not _is_block_neighbor(pos0, visited[-1]):
-    #     # Bad choice of first voxel, so let's try to rotate the batch
-    #     assert _is_block_neighbor(visited[1], visited[-1])
-    #     visited = visited[1:]
-    #     visited.append(pos0)
-
-    ########################################
-    # Triangle fan
+    # Normal approximation of this block
+    # normal = _sum_normals(normals, sopt_union)
+    # normal_len = np.linalg.norm(normal)
+    # min_cos_angle = 0
 
     # Construct vertices and faces
-    verts = np.array(visited[:len_visited], dtype=np.int32)
+    verts = np.array(visited, dtype=np.int32)
     faces = np.zeros((len_visited - 2, 3), dtype=np.uint32)
     for i in range(len_visited - 2):
-        faces[i] = (i, i + 1, i + 2)
+        f1 = i + 1
+        f2 = i + 2
+        vertNormal = np.cross(verts[f1] - verts[0], verts[f2] - verts[0]).astype(np.float32)
+        approxNormal = (normals[visited[0]] + normals[visited[f1]] + normals[visited[f2]])
+
+        # Swap if angle (scalar product) is greater than 90°.
+        if (vertNormal @ approxNormal) < 0:  # cos(90° degree max angle) * |vertNormal| * |approxNormal|
+            faces[i] = (0, f2, f1)  # swap vertices to rotate face
+        else:
+            faces[i] = (0, f1, f2)
     return verts, faces
 
 
 @numba.njit(fastmath=True)
-def _extract_polygon_edges(sopt: np.ndarray) -> List[Tuple[np.ndarray, np.ndarray]]:
+def _extract_polygon_edges(sopt: np.ndarray, segments: np.ndarray, normals: np.ndarray) \
+        -> List[Tuple[np.ndarray, np.ndarray]]:
     detected = _sum_block222(sopt)
     result: List[Tuple[np.ndarray, np.ndarray]] = []
     for pos in np.argwhere(detected >= 3):
         x, y, z = pos
-        v, f = _make_face(sopt[x:x + 2, y:y + 2, z:z + 2])
+        sopt_block = sopt[x:x + 2, y:y + 2, z:z + 2]
+        cut_edges = _detect_cut_edges(sopt_block, segments[x:x + 2, y:y + 2, z:z + 2])
+        normals_block = normals[x:x + 2, y:y + 2, z:z + 2]
+        v, f = _make_face(sopt_block, cut_edges, normals_block)
         if len(v) > 0:
             result.append((v + pos, f))
 
     # Fallback, empty result
+    return result
+
+
+def extract_voxel_segments(nodes_index: Dict[NodeIndex, int], segments: np.ndarray, sopt: np.ndarray, offset: Vec3i):
+    """Compute segment for each voxel in sopt"""
+    _get_node = MinCut.get_node
+    start = np.asanyarray(offset)
+    result = np.zeros((*sopt.shape, 6), dtype=np.bool8)
+    for p in np.argwhere(sopt):
+        pos = start + p
+        tpos = tuple(pos)
+        value = [segments[nodes_index[_get_node(tpos, f)]] for f in ChunkFace]
+        assert any(value)  # Make sure that the segment is valid!
+        result[p[0], p[1], p[2], :] = value
     return result
 
 
@@ -178,7 +216,6 @@ class MeshExtraction:
         self.segment0, self.segment1 = mincut.grid_segments()
         self.s_opt = self.segment0 & self.segment1
         self.mincut = mincut
-        self.mesh = PolyMesh()
 
     def extract_mesh(self):
         sopt = self.s_opt
@@ -188,193 +225,38 @@ class MeshExtraction:
 
         size = sopt.chunk_size
 
+        # Cache mincut segments
+        segments = self.mincut.segments()
+        nodes_index = self.mincut.nodes_index
+
+        # Approximate surface normals via outer segment
+        normals = grid_normals(sopt, outer=self.segment0)
+
         result: List[Tuple[np.ndarray, np.ndarray]] = []
         for index in sopt.chunks.keys():
+            position = np.asanyarray(index, dtype=np.int32) * size
             block = sopt.get_block_at(index, (2, 2, 2), offset=(0, 0, 0))
             pad = sopt.block_to_array(block)
-            v, f = voxel_render.reduce_mesh(_extract_polygon_edges(pad[:size + 1, :size + 1, :size + 1]))
-            v += np.asanyarray(index, dtype=np.int32) * size
+            block_sopt = pad[:size + 1, :size + 1, :size + 1]
+
+            # Surface normals
+            arr_normals = normals.block_to_array(normals.get_block_at(index, (2, 2, 2), offset=(0, 0, 0)))
+            block_normals = arr_normals[:size + 1, :size + 1, :size + 1]
+
+            # Octaeder segments
+            voxel_segments = extract_voxel_segments(nodes_index, segments, block_sopt, position)
+
+            v, f = voxel_render.reduce_mesh(_extract_polygon_edges(block_sopt, voxel_segments, block_normals))
+            # v, f = voxel_render.reduce_mesh(_extract_polygon_edges(block_sopt))
+            v += position
             result.append((v, f))
 
         # unpack results
         vs, fs = voxel_render.reduce_mesh(result)
         return vs.astype(dtype=np.float32) + 0.5, fs
 
-    def extract_mesh_old(self):
-        block = self.get_block(self.get_first_block())
-        block_num = 0
-        invalid_faces = 0
-        while block is not None:
-            if not self.make_face(block):
-                print(block)
-                invalid_faces += 1
-            next_block_pos = self.get_next_block(block[0])
-            if next_block_pos is not None:
-                block = self.get_block(next_block_pos)
-            else:
-                break
-            block_num += 1
-        print('block num ', block_num)
-        print('invalid faces ', invalid_faces)
-        return self.mesh
 
-    def make_face(self, block: np.ndarray):
-        starting_voxel, current_edge = self.get_starting_edge(block[0])
-        current_voxel, next_voxel = starting_voxel, -1
-        face = []
-        while starting_voxel != next_voxel:
-            self.mesh.add_vertex(block[current_voxel])
-            face.append(self.mesh.add_vertex(block[current_voxel]))
-            cut_edges = self.get_cut_edges(current_voxel, self.get_nodes(block[current_voxel]))
-            next_edge = set(cut_edges) - {current_edge}
-            assert next_edge, "No adjacent cut edge found."
-            next_edge = next_edge.pop()
-            for i, v in enumerate(block):
-                if i == current_voxel:
-                    continue
-                nodes = self.get_nodes(v)
-                if nodes is None:
-                    continue
-                edges = self.get_cut_edges(i, nodes)
-                if next_edge in edges:
-                    next_voxel = i
-                    current_voxel = next_voxel
-                    current_edge = next_edge
-                    break
-
-        if len(face) >= 3:
-            self.mesh.faces.append(face)
-            return True
-        else:
-            return False
-
-    def get_starting_edge(self, start_pos: Vec3i) -> (int, tuple):
-        block = self.get_block(start_pos)
-        for i, pos in enumerate(block):
-            if self.s_opt.get_value(pos):
-                cut_edges = self.get_cut_edges(i, self.get_nodes(pos))
-                if len(cut_edges) < 2:
-                    continue
-                assert len(cut_edges) == 2, "Cut edges must be 2, but is " + str(len(cut_edges))
-                return i, cut_edges[0]
-        raise RuntimeError("No starting cut edge found.")
-
-    def get_nodes(self, pos: Vec3i) -> np.ndarray:
-        indices = []
-        for i in range(6):
-            index = self.get_node(tuple(pos), ChunkFace(i))
-            if index in self.nodes_index:
-                indices.append(index)
-        if len(indices) == 6:
-            return np.array([self.nodes_index[i] for i in indices])
-        else:
-            print("pos: ", pos, "num nodes: ", len(indices))
-
-    def get_cut_edges(self, block_id, nodes: np.ndarray) -> tuple:
-        cut_edges = []
-        edges = self.block_idx_to_edges(block_id)
-        for e in edges:
-            n = self.block_edge_to_nodes(block_id, e, nodes)
-            if self.segments[n[0]] != self.segments[n[1]]:
-                cut_edges.append(e)
-        assert len(cut_edges) <= 2, "Each voxel should have at most 2 cut edges."
-        return tuple(cut_edges)
-
-    def get_first_block(self) -> Vec3i:
-        for c, chunk in self.s_opt.chunks.items():
-            if not chunk.any():
-                continue
-            for pos_x, x in enumerate(chunk.to_array()):
-                for pos_y, y in enumerate(x):
-                    for pos_z, z in enumerate(y):
-                        pos = np.array((pos_x, pos_y, pos_z)) + np.array(c) * self.s_opt.chunk_size
-                        if self.has_face(pos):
-                            return pos
-        raise RuntimeError("No starting block can be found.")
-
-    def get_next_block(self, start_pos: Vec3i) -> Vec3i:
-        inner_pos = np.mod(start_pos, self.s_opt.chunk_size)
-        chunk = self.s_opt.chunk_at_pos(start_pos)
-        if tuple(inner_pos) is not (self.s_opt.chunk_size - 1,) * 3:
-            if inner_pos[2] < self.s_opt.chunk_size - 1:
-                for pos_z, z in enumerate(chunk.to_array()[inner_pos[0], inner_pos[1], inner_pos[2] + 1:]):
-                    pos = (inner_pos[0], inner_pos[1], pos_z + inner_pos[2] + 1) + np.array(
-                        chunk.index) * self.s_opt.chunk_size
-                    if self.has_face(pos):
-                        return pos
-            if inner_pos[1] < self.s_opt.chunk_size - 1:
-                for pos_y, y in enumerate(chunk.to_array()[inner_pos[0], inner_pos[1] + 1:]):
-                    for pos_z, z in enumerate(y):
-                        pos = (inner_pos[0], pos_y + inner_pos[1] + 1, pos_z) + np.array(
-                            chunk.index) * self.s_opt.chunk_size
-                        if self.has_face(pos):
-                            return pos
-            if inner_pos[0] < self.s_opt.chunk_size - 1:
-                for pos_x, x in enumerate(chunk.to_array()[inner_pos[0] + 1:]):
-                    for pos_y, y in enumerate(x):
-                        for pos_z, z in enumerate(y):
-                            pos = (pos_x + inner_pos[0] + 1, pos_y, pos_z) + np.array(
-                                chunk.index) * self.s_opt.chunk_size
-                            if self.has_face(pos):
-                                return pos
-        start_iter = False
-        for c, c_ in self.s_opt.chunks.items():
-            if c == tuple(chunk.index):
-                start_iter = True
-                continue
-            elif not start_iter:
-                continue
-            if not c_.any():
-                continue
-            for pos_x, x in enumerate(chunk.to_array()):
-                for pos_y, y in enumerate(x):
-                    for pos_z, z in enumerate(y):
-                        pos = np.array((pos_x, pos_y, pos_z)) + np.array(c) * self.s_opt.chunk_size
-                        if self.has_face(pos):
-                            return pos
-
-    def has_face(self, pos: Vec3i):
-        block = self.get_block(pos)
-        count = 0
-        for i, p in enumerate(block):
-            if not self.s_opt.get_value(p):
-                continue
-            nodes = self.get_nodes(p)
-            if nodes is not None and (len(self.get_cut_edges(i, nodes)) == 2):
-                count += 1
-        if count >= 3:
-            return True
-        else:
-            return False
-
-    def get_block(self, pos: Vec3i):
-        idx = np.array(((0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1), (1, 0, 0), (1, 0, 1), (1, 1, 0), (1, 1, 1)))
-        return idx + pos
-
-    def block_idx_to_edges(self, idx: int) -> Tuple[Edge, Edge, Edge]:
-        """
-
-        :param idx: Index of the voxel in the 2x2x2 block. Can be 0 to 7.
-        :return: Edges adjacent to the center corner of the block.
-        """
-        idx_to_edges = {
-            0: (Edge.SOUTH, Edge.BOTTOM, Edge.WEST),
-            1: (Edge.SOUTH, Edge.BOTTOM, Edge.EAST),
-            2: (Edge.SOUTH, Edge.TOP, Edge.WEST),
-            3: (Edge.SOUTH, Edge.TOP, Edge.EAST),
-            4: (Edge.NORTH, Edge.BOTTOM, Edge.WEST),
-            5: (Edge.NORTH, Edge.BOTTOM, Edge.EAST),
-            6: (Edge.NORTH, Edge.TOP, Edge.WEST),
-            7: (Edge.NORTH, Edge.TOP, Edge.EAST)
-        }
-        assert idx in idx_to_edges, "Invalid block index."
-        return idx_to_edges[idx]
-
-    def block_edge_to_nodes(self, block_idx: int, edge: Edge, nodes: np.ndarray) -> tuple:
-        edges = self.block_idx_to_edges(block_idx)
-        edges = set(edges) - {edge}
-        return nodes[edges.pop().flip()], nodes[edges.pop().flip()]
-
+class Smoothing:
     def smooth(self, vertices: np.ndarray, faces: np.ndarray, diffusion: ChunkGrid[float], original_mesh: Meshes,
                max_iteration=50):
         assert max_iteration > -1
@@ -422,41 +304,36 @@ class MeshExtraction:
             s.remove(v)
         return neighbors
 
-    def make_triangles(self):
-        triangles = []
-        for f in self.mesh.faces:
-            if len(f) == 3:
-                triangles.append(f)
-                continue
-            for i in range(len(f) - 2):
-                triangles.append([f[0], f[i + 1], f[i + 2]])
-        return np.array(triangles)
 
-    def make_triangles_list(self):
-        triangles = []
-        for f in self.mesh.faces:
-            if len(f) == 3:
-                triangles.append(f)
-                continue
-            for i in range(len(f) - 2):
-                triangles.append([f[0], f[i + 1], f[i + 2]])
-        return triangles
+# @numba.njit(fastmath=True)
+# def _iter_block_neighbors(pos: Vec3i):
+#     x0, y0, z0 = pos
+#     x1, y1, z1 = (x0 + 1) % 2, (y0 + 1) % 2, (z0 + 1) % 2
+#     # Order is important - first the direct ones
+#     yield x1, y0, z0
+#     yield x0, y1, z0
+#     yield x0, y0, z1
+#     # # then  the edge neighbors
+#     yield x0, y1, z1
+#     yield x1, y0, z1
+#     yield x1, y1, z0
 
-    def get_node(self, pos: Vec3i, face: ChunkFace) -> NodeIndex:
-        """Basically forces to have only positive-direction faces"""
-        if face % 2 == 0:
-            return pos, face
-        else:
-            return tuple(np.add(pos, face.direction(), dtype=int)), face.flip()
 
-    def to_voxel(self, nodeIndex: NodeIndex) -> Sequence[Vec3i]:
-        pos, face = nodeIndex
-        return [
-            pos,
-            np.asarray(face.direction()) * (face.flip() % 2) + pos
-        ]
+@numba.njit(fastmath=True, inline='always')
+def _distance_block(a: Vec3i, b: Vec3i):
+    return abs(b[0] - a[0]) + abs(b[1] - a[1]) + abs(b[2] - a[2])
 
-    def get_pytorch_mesh(self) -> Meshes:
-        verts = torch.FloatTensor(self.mesh.get_vertex_list())
-        faces_idx = torch.LongTensor(self.make_triangles_list())
-        return Meshes(verts=[verts], faces=[faces_idx])
+
+@numba.njit(fastmath=True, inline='always')
+def _is_block_neighbor(a: Vec3i, b: Vec3i):
+    s = _distance_block(a, b)
+    return s == 1 or s == 2  # Direct neighbor or edge neighbor; but not identity and not diagonal!
+
+# @numba.stencil(cval=0)
+# def _connectivity(a):
+#     return (
+#             (a[0, 0, 1] + a[0, 0, -1] + a[0, 1, 0] + a[0, -1, 0] + a[1, 0, 0] + a[-1, 0, 0]) * 3
+#             + a[0, 1, 1] + a[0, -1, 1] + a[0, 1, -1] + a[0, -1, -1]
+#             + a[1, 0, 1] + a[-1, 0, 1] + a[1, 0, -1] + a[-1, 0, -1]
+#             + a[1, 1, 0] + a[-1, 1, 0] + a[1, -1, 0] + a[-1, -1, 0]
+#     )

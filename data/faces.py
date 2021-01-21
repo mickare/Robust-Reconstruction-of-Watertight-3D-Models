@@ -24,12 +24,12 @@ CHUNK_SLICE_DEFAULT = [(-1, __CSNONE, __CSNONE),
 
 
 class ChunkFace(enum.IntEnum):
-    NORTH = 0
-    SOUTH = 1
-    TOP = 2
-    BOTTOM = 3
-    EAST = 4
-    WEST = 5
+    NORTH = 0  # +X
+    SOUTH = 1  # -X
+    TOP = 2  # +Y
+    BOTTOM = 3  # -Y
+    EAST = 4  # +Z
+    WEST = 5  # -Z
 
     def direction(self) -> np.ndarray:
         return CHUNK_DIRECTIONS[self]

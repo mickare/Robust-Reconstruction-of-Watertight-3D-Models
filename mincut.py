@@ -21,6 +21,10 @@ class MinCut:
     _grid_segment0 = None
     _grid_segment1 = None
 
+    # Static const variables
+    SEGMENT_OUTER_ID = 0  # Source
+    SEGMENT_INNER_ID = 1  # Sink
+
     def __init__(self, diff: ChunkGrid[float], crust: ChunkGrid[bool], crust_outer: ChunkGrid[bool],
                  crust_inner: ChunkGrid[bool], s=4, a=1e-20):
         self.crust = crust
@@ -83,7 +87,7 @@ class MinCut:
     def segments(self):
         if self._segments is None:
             flow = self.graph.maxflow()
-            self._segments = self.graph.get_grid_segments(np.arange(len(self.nodes)))
+            self._segments = np.asanyarray(self.graph.get_grid_segments(np.arange(len(self.nodes))))
         return self._segments
 
     def grid_segments(self) -> Tuple[ChunkGrid[np.bool8], ChunkGrid[np.bool8]]:
