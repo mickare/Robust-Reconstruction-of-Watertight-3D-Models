@@ -25,7 +25,7 @@ numba.config.THREADING_LAYER = 'omp'
 
 CHUNKSIZE = 16
 RESOLUTION_INIT = 64
-example = Example.Cat
+example = Example.Dog
 STEPS = 5
 
 if __name__ == '__main__':
@@ -199,7 +199,7 @@ if __name__ == '__main__':
 
             ren = VoxelRender()
             fig = ren.make_figure()
-            fig.add_trace(ren.make_mesh(vertices, faces, name='Mesh', flatshading=False))
+            fig.add_trace(ren.make_mesh(vertices, faces, name='Mesh', flatshading=True))
             fig.add_trace(ren.make_wireframe(vertices, faces, name='Wireframe'))
             fig.update_layout(showlegend=True)
             fig.show()

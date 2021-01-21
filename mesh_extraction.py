@@ -253,7 +253,7 @@ class MeshExtraction:
 
         # unpack results
         vs, fs = voxel_render.reduce_mesh(result)
-        return vs.astype(dtype=np.float32) + 0.5, fs
+        return vs.astype(dtype=np.float32) + 0.5, fs.astype(np.int32)
 
 
 class Smoothing:

@@ -33,11 +33,11 @@ example_config: Dict[Example, Dict] = {
     ),
     Example.Cat: dict(
         dilations_max=20,
-        dilations_reverse=3
+        dilations_reverse=4
     ),
     Example.Dog: dict(
         dilations_max=20,
-        dilations_reverse=3
+        dilations_reverse=4
     ),
     Example.Camel: dict(
         dilations_max=20,
@@ -54,8 +54,8 @@ def example_load(example: Example) -> np.ndarray:
     if example == Example.Dragon:
         return Dragon().load()
     if example == Example.Cat:
-        return MeshModelLoader(samples=30000, noise=0.1).load("models/cat/cat_reference.obj")
+        return MeshModelLoader(samples=30000, noise=0.01).load("models/cat/cat_reference.obj")
     if example == Example.Dog:
-        return MeshModelLoader(samples=30000, noise=0.1).load("models/dog/dog_reference.obj")
+        return MeshModelLoader(samples=30000, noise=0.01).load("models/dog/dog_reference.obj")
     if example == Example.Camel:
-        return MeshModelLoader(samples=60000, noise=0.1).load("models/camel-poses/cat_reference.obj")
+        return MeshModelLoader(samples=60000, noise=0.01).load("models/camel-poses/camel-reference.obj")
