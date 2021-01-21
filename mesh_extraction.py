@@ -274,7 +274,6 @@ class Smoothing:
 
         while change and iteration < max_iteration:
             iteration += 1
-            print(iteration)
             change = False
 
             for i in range(2):
