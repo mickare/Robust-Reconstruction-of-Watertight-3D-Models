@@ -270,6 +270,8 @@ class Smoothing:
             [sum([1 / neighbor_len[n] for n in neighbors[i]]) for i in range(len(vertices))])
         d = 1 + 1 / neighbor_len * neighbor_valences
 
+        difference_max = torch.as_tensor(diffusion.get_values(vertices) + 1)
+
         while change and iteration < max_iteration:
             iteration += 1
             print(iteration)
@@ -285,12 +287,19 @@ class Smoothing:
             # new_vals = smooth_verts - (1/d).unsqueeze(1) * loss
             # difference = torch.sqrt(torch.sum(torch.pow(original_mesh.verts_packed() - new_vals, 2), dim=1))
 
-            for i, v in enumerate(vertices):
-                new_val = smooth_verts[i] - (1 / d[i] * loss[i])
-                difference = torch.dist(original_mesh.verts_packed()[i], new_val)
-                if difference < 1 + diffusion.get_value(vertices[i]):
-                    smooth_verts[i] = new_val
-                    change = True
+            new_val = smooth_verts - (loss.T * (1 / d)).T
+            differences = torch.linalg.norm(original_mesh.verts_packed() - new_val, dim=1)
+            cond = differences < difference_max
+            if torch.any(cond):
+                smooth_verts[cond] = new_val[cond]
+                change = True
+
+            # for i, v in enumerate(vertices):
+            #     new_val = smooth_verts[i] - (1 / d[i] * loss[i])
+            #     difference = torch.dist(original_mesh.verts_packed()[i], new_val)
+            #     if difference < difference_max[i]:
+            #         smooth_verts[i] = new_val
+            #         change = True
 
             loss_mesh = Meshes([smooth_verts], original_mesh.faces_list())
         return smooth_verts
