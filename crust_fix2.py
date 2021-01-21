@@ -1,4 +1,5 @@
 import gc
+import os
 import time
 from typing import Optional, Tuple
 
@@ -170,7 +171,8 @@ def crust_fix(crust: ChunkGrid[np.bool8],
               crust_outer: ChunkGrid[np.bool8],
               crust_inner: ChunkGrid[np.bool8],
               min_distance: int = 1,
-              data_pts: Optional[np.ndarray] = None  # for plotting
+              data_pts: Optional[np.ndarray] = None,  # for plotting,
+              export_path: Optional[str] = None
               ):
     CHUNKSIZE = crust.chunk_size
     normal_kernel = make_normal_kernel()
@@ -183,7 +185,7 @@ def crust_fix(crust: ChunkGrid[np.bool8],
 
     print("\tCreate Normals: ")
     with timed("\t\tTime: "):
-        normal_zero = np.zeros(3, dtype=np.float32)
+        # normal_zero = np.zeros(3, dtype=np.float32)
         normal_pos = np.array(list(crust_outer.where()))
         normal_val = np.full((len(normal_pos), 3), 0.0, dtype=np.float32)
         for n, p in enumerate(normal_pos):
@@ -212,6 +214,8 @@ def crust_fix(crust: ChunkGrid[np.bool8],
         fig.add_trace(ren.make_scatter(markers_outer_tips, marker=dict(size=1, symbol='x'), name="Start nromal end"))
         if data_pts is not None:
             fig.add_trace(ren.make_scatter(data_pts, opacity=0.1, size=1, name='Model'))
+        if export_path:
+            fig.write_html(os.path.join(export_path, "normal_start.html"))
         fig.show()
 
     print("\tNormal Propagation")
@@ -242,6 +246,8 @@ def crust_fix(crust: ChunkGrid[np.bool8],
         fig.add_trace(ren.make_scatter(markers_crust, marker=dict(opacity=0.5, ), mode="lines", name="Normal field"))
         if data_pts is not None:
             fig.add_trace(ren.make_scatter(data_pts, opacity=0.1, size=1, name='Model'))
+        if export_path:
+            fig.write_html(os.path.join(export_path, "normal_field.html"))
         fig.show()
 
     print("\tNormal cone: ")
@@ -268,7 +274,7 @@ def crust_fix(crust: ChunkGrid[np.bool8],
     with timed("\t\tTime: "):
         time.sleep(0.01)
         ren = VoxelRender()
-        fig = ren.make_figure(title=None)
+        fig = ren.make_figure(title="Crust-Normal-Fix: Result before cleanup")
         print("Ren2-medial")
         fig.add_trace(ren.grid_voxel(medial, opacity=0.3, name='Medial'))
         # fig.add_trace(ren.grid_voxel(medial_cleaned, opacity=0.05, name='Fixed'))
@@ -278,13 +284,15 @@ def crust_fix(crust: ChunkGrid[np.bool8],
             print("Ren2-data_pts")
             fig.add_trace(CloudRender().make_scatter(data_pts, opacity=0.2, size=1, name='Model'))
         print("Ren2-show")
+        if export_path:
+            fig.write_html(os.path.join(export_path, "medial.html"))
         fig.show()
 
     print("\tRender 3: ")
     with timed("\t\tTime: "):
         time.sleep(0.01)
         ren = VoxelRender()
-        fig = ren.make_figure(title="Crust-Fix: Result")
+        fig = ren.make_figure(title="Crust-Fix: Result after cleanup")
         # fig.add_trace(ren.grid_voxel(medial, opacity=0.3, name='Fixed'))
         print("Ren2-medial_cleaned")
         fig.add_trace(ren.grid_voxel(medial_cleaned, opacity=0.3, name='Medial-Cleaned'))
@@ -294,6 +302,8 @@ def crust_fix(crust: ChunkGrid[np.bool8],
             print("Ren3-data_pts")
             fig.add_trace(CloudRender().make_scatter(data_pts, opacity=0.2, size=1, name='Model'))
         print("Ren3-show")
+        if export_path:
+            fig.write_html(os.path.join(export_path, "medial_cleaned.html"))
         fig.show()
 
     return medial_cleaned

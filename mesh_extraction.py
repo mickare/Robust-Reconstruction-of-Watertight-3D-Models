@@ -6,6 +6,8 @@ from typing import Tuple, Sequence, List, Set
 import torch
 from pytorch3d.structures import Meshes
 
+from mincut import MinCut
+
 NodeIndex = Tuple[Vec3i, ChunkFace]
 
 
@@ -49,13 +51,11 @@ class PolyMesh:
 
 
 class MeshExtraction:
-    def __init__(self, segment0: ChunkGrid[np.bool], segment1: ChunkGrid[np.bool], segments: np.ndarray,
-                 nodes_index: dict):
-        self.segment0 = segment0
-        self.segment1 = segment1
-        self.s_opt = segment0 & segment1
-        self.segments = segments
-        self.nodes_index = nodes_index
+    def __init__(self, mincut: MinCut):
+        self.segment0, self.segment1 = mincut.grid_segments()
+        self.s_opt = self.segment0 & self.segment1
+        self.segments = mincut.segments()
+        self.nodes_index = mincut.nodes_index
         self.mesh = PolyMesh()
 
     def extract_mesh(self):
@@ -234,7 +234,7 @@ class MeshExtraction:
         return nodes[edges.pop().flip()], nodes[edges.pop().flip()]
 
     def smooth(self, vertices: np.ndarray, faces: np.ndarray, diffusion: ChunkGrid[float], original_mesh: Meshes,
-                max_iteration=50):
+               max_iteration=50):
         assert max_iteration > -1
         change = True
         iteration = 0
