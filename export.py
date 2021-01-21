@@ -1,4 +1,5 @@
 import enum
+import os
 from typing import Optional, Sequence, Dict
 
 import numba
@@ -26,12 +27,19 @@ numba.config.THREADING_LAYER = 'omp'
 
 CHUNKSIZE = 16
 RESOLUTION_INIT = 64
-example = Example.BunnyFixed
+example = Example.Dragon
 STEPS = 4
 APPROX_MEDIAL_AXIS = True
 
 if __name__ == '__main__':
     resolution = RESOLUTION_INIT
+
+    medial_name = "_medial" if APPROX_MEDIAL_AXIS else ""
+    name = f"{example.name}{medial_name}"
+
+    path = os.path.join("result", name)
+    os.makedirs(path, exist_ok=True)
+    plots = []
 
     print("Loading model")
     with timed("\tTime: "):
@@ -52,11 +60,12 @@ if __name__ == '__main__':
     crust: ChunkGrid[np.bool8] = model.copy()
     crust.cleanup(remove=True)
 
-    # ren = VoxelRender()
-    # fig = ren.make_figure()
-    # fig.add_trace(ren.grid_voxel(initial_crust, opacity=0.1, name='Initial'))
-    # fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
-    # fig.show()
+    ren = VoxelRender()
+    fig = ren.make_figure()
+    fig.add_trace(ren.grid_voxel(crust, opacity=0.1, name='Initial'))
+    fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
+    plots.append(os.path.join(path, "model.html"))
+    fig.write_html(plots[-1])
 
     print("Dilation")
     with timed("\tTime: "):
@@ -64,7 +73,10 @@ if __name__ == '__main__':
                                                           reverse_steps=dilations_reverse)
         # assert components._fill_value == 2
 
-        plot_voxels(components == 0, components, title=f"Initial Dilation").show()
+        fig = plot_voxels(components == 0, components, title=f"Initial Dilation")
+        plots.append(os.path.join(path, f"dilation_start.html"))
+        fig.write_html(plots[-1])
+
         crust_dilate = dilate(crust)
         outer_fill = components == 2
         crust_outer = outer_fill & crust_dilate
@@ -81,6 +93,9 @@ if __name__ == '__main__':
     for resolution_step in range(0, STEPS):
         print(f"RESOLUTION STEP: {resolution_step}")
 
+        path_step = os.path.join(path, str(resolution_step))
+        os.makedirs(path_step, exist_ok=True)
+
         if APPROX_MEDIAL_AXIS:
             """
             Approximate Voxel near Medial Axis, by propagating a Normal field inwards.
@@ -88,11 +103,18 @@ if __name__ == '__main__':
             """
             print("Crust-Fix")
             with timed("\tTime: "):
-                crust_inner |= crust_fix(
+                medial_axis, medial_figs = crust_fix(
                     crust, outer_fill, crust_outer, crust_inner,
                     min_distance=dilation_step,
-                    data_pts=plot_model
+                    data_pts=plot_model,
+                    return_figs=True
                 )
+                crust_inner |= medial_axis
+
+                for fig_name, fig in medial_figs.items():
+                    plots.append(os.path.join(path_step, f"{fig_name}.html"))
+                    fig.write_html(plots[-1])
+
             #     # crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
 
         print("Render Crust")
@@ -103,7 +125,9 @@ if __name__ == '__main__':
             fig.add_trace(ren.grid_voxel(crust_inner, opacity=1.0, name='Inner'))
             if plot_model is not None:
                 fig.add_trace(CloudRender().make_scatter(plot_model, size=0.7, name='Model'))
-            fig.show()
+
+            plots.append(os.path.join(path_step, f"crust.html"))
+            fig.write_html(plots[-1])
 
         print("Diffusion")
         with timed("\tTime: "):
@@ -144,7 +168,8 @@ if __name__ == '__main__':
                 ),
                 mode="markers",
             ))
-            fig.show()
+            plots.append(os.path.join(path_step, f"diffusion.html"))
+            fig.write_html(plots[-1])
 
         print("MinCut")
         with timed("\tTime: "):
@@ -161,7 +186,8 @@ if __name__ == '__main__':
             fig.add_trace(ren.grid_voxel(thincrust, opacity=1.0, name='Join'))
             if plot_model is not None:
                 fig.add_trace(CloudRender().make_scatter(plot_model, size=1, name='Model'))
-            fig.show()
+            plots.append(os.path.join(path_step, f"mincut.html"))
+            fig.write_html(plots[-1])
 
         print("Volumetric refinement")
         with timed("\tTime: "):
@@ -176,6 +202,7 @@ if __name__ == '__main__':
             # Build new crust
             crust = dilate(dilate(thincrust.split(2), steps=1) | dilate(model, steps=3))
             crust.cleanup(remove=True)
+            crust.pad_chunks(1)
 
             components, count = fill_components(crust, max_components=5)
             cleanup_components(crust, components, count)
@@ -209,7 +236,9 @@ if __name__ == '__main__':
             fig.add_trace(ren.make_mesh(vertices, faces, name='Mesh', flatshading=True))
             fig.add_trace(ren.make_wireframe(vertices, faces, name='Wireframe'))
             fig.update_layout(showlegend=True)
-            fig.show()
+
+            plots.append(os.path.join(path_step, f"mesh_extraction.html"))
+            fig.write_html(plots[-1])
 
         print("Smoothing mesh")
         with timed("\tTime: "):
@@ -226,4 +255,24 @@ if __name__ == '__main__':
             fig.add_trace(ren.make_mesh(verts, faces, name='Mesh', flatshading=False))
             fig.add_trace(ren.make_wireframe(verts, faces, name='Wireframe'))
             fig.update_layout(showlegend=True)
-            fig.show()
+
+            plots.append(os.path.join(path_step, f"mesh_final.html"))
+            fig.write_html(plots[-1])
+
+    html = f"""
+    <html>
+<head>
+    <title>{name}</title>
+    </head>
+<body>"""
+    html += "<ul>"
+    for p in plots:
+        html += f"<li><a href=\"{p}\">{p}</a></li>"
+    html += "</ul>"
+    html += """
+</body>
+    </html>
+    """
+
+    with open(os.path.join(path, "index.html"), 'wt') as fp:
+        fp.writelines(html)

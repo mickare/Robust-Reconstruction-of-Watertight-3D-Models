@@ -1,6 +1,7 @@
 # Ignore project specific stuff
 
 .cache
+result/
 
 
 # Created by .ignore support plugin (hsz.mobi)

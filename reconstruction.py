@@ -197,4 +197,5 @@ def plot_voxels(grid: ChunkGrid[np.bool8], components: ChunkGrid[np.int8], title
         if c > 2:
             fig.add_trace(ren.grid_voxel(components == c, opacity=1.0, name=f"Component {c}"))
     fig.update_layout(showlegend=True)
-    fig.show()
+    return fig
+

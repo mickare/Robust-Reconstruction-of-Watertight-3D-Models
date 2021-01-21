@@ -1,8 +1,9 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 import numba
 import numpy as np
 from scipy import ndimage
+import plotly.graph_objects as go
 
 from data.chunks import ChunkGrid
 from data.faces import ChunkFace
@@ -176,7 +177,8 @@ def crust_fix(crust: ChunkGrid[np.bool8],
               crust_outer: ChunkGrid[np.bool8],
               crust_inner: ChunkGrid[np.bool8],
               min_distance: int = 1,
-              data_pts: Optional[np.ndarray] = None  # for plotting
+              data_pts: Optional[np.ndarray] = None,  # for plotting
+              return_figs=False
               ):
     CHUNKSIZE = crust.chunk_size
     normal_kernel = make_normal_kernel()
@@ -186,6 +188,8 @@ def crust_fix(crust: ChunkGrid[np.bool8],
     # Method cache (prevent lookup in loop)
     __grid_set_value = ChunkGrid.set_value
     __np_sum = np.sum
+
+    figs: Dict[str, go.Figure] = dict()
 
     print("\tCreate Normals: ")
     with timed("\t\tTime: "):
@@ -218,7 +222,10 @@ def crust_fix(crust: ChunkGrid[np.bool8],
         fig.add_trace(ren.make_scatter(markers_outer_tips, marker=dict(size=1, symbol='x'), name="Start nromal end"))
         if data_pts is not None:
             fig.add_trace(ren.make_scatter(data_pts, opacity=0.1, size=1, name='Model'))
-        fig.show()
+        if return_figs:
+            figs["normals"] = fig
+        else:
+            fig.show()
 
     print("\tNormal Propagation")
     with timed("\t\tTime: "):
@@ -286,7 +293,10 @@ def crust_fix(crust: ChunkGrid[np.bool8],
             print("Ren2-data_pts")
             fig.add_trace(CloudRender().make_scatter(data_pts, opacity=0.2, size=1, name='Model'))
         print("Ren2-show")
-        fig.show()
+        if return_figs:
+            figs["medial_axis"] = fig
+        else:
+            fig.show()
 
     print("\tRender 3: ")
     with timed("\t\tTime: "):
@@ -301,6 +311,11 @@ def crust_fix(crust: ChunkGrid[np.bool8],
             print("Ren3-data_pts")
             fig.add_trace(CloudRender().make_scatter(data_pts, opacity=0.2, size=1, name='Model'))
         print("Ren3-show")
-        fig.show()
+        if return_figs:
+            figs["medial_axis_cleaned"] = fig
+        else:
+            fig.show()
 
+    if return_figs:
+        return medial_cleaned, figs
     return medial_cleaned
