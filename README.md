@@ -11,7 +11,7 @@ It is used to compute a **watertight mesh of a point cloud**, which is the **min
 
 ## How it works
 
-1. A a low resolution voxel grid is filled via a point cloud. 
+1. A low resolution voxel grid is filled via a point cloud. 
 2. A **boolean crust** is created by dilation & flood-filling until a watertight voxel crust is created. 
 3. The **float distance values ϕ** of each crust voxel to the model point cloud is computed via diffusion 
 of the point cloud.
