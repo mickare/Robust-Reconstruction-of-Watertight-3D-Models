@@ -3,6 +3,12 @@
 This is a Python implementation of the paper ["Robust Reconstruction of Watertight 3D Models from Non-uniformly Sampled 
 Point Clouds Without Normal Information" by A. Hornung and L. Kobbelt](https://diglib.eg.org/bitstream/handle/10.2312/SGP.SGP06.041-050/041-050.pdf).
 
+## TL;DR
+Basically the paper proposes a **minimum solver** of a **3D distance function ϕ**
+that uses **voxels** and is solved via a **max-flow min-cut**.
+
+It is used to compute a **watertight mesh of a point cloud**, which is the **minimum of ϕ**.
+
 ## How it works
 
 1. A a low resolution voxel grid is filled via a point cloud. 
