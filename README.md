@@ -5,10 +5,10 @@ Point Clouds Without Normal Information" by A. Hornung and L. Kobbelt](https://d
 
 ## How it works
 
-1. Start at a low resolution voxel grid that is filled with the model's point cloud. 
-2. A **boolean crust** is created by dilating the voxels until a watertight voxel crust is created. 
-3. The **float distance values ϕ** of each crust voxel to the model point cloud is computed by diffusing
-a value from the model point cloud's voxels.
+1. A a low resolution voxel grid is filled via a point cloud. 
+2. A **boolean crust** is created by dilation & flood-filling until a watertight voxel crust is created. 
+3. The **float distance values ϕ** of each crust voxel to the model point cloud is computed via diffusion 
+of the point cloud.
 4. A **weighted graph of ϕ** is created from the outer crust surface to the inner crust surface. 
 The Maxflow-Mincut of this graph is the minimum of ϕ.
 5. Either:
@@ -75,7 +75,17 @@ The chunk size N³ (e.g. 16x16x16) can be configured in [`main.py`](main.py) or 
 You can find the data structure in [`data/chunks.py`](data/chunks.py).
 
 ## Plotting
-[Plotly](https://plotly.com/) is used for plotting.
+[Plotly](https://plotly.com/) is used for plotting the 3D point clouds, meshes and voxels.
 
 The voxel mesh is created in [`render/voxel_render.py`](render/voxel_render.py).
 It reduces the number of triangle faces by merging neighboring voxel faces.
+
+
+# License
+The code in this repository is licensed under the [MIT License](LICENSE).
+
+The models and point clouds are each licensed from a third party and are not part of this license!
+You should NOT distribute or use these models against their license.
+A list of the used model licenses and source is at [models/README.md](models/README.md).
+
+The listed [requirements](requirements.txt) are not part of this license!
