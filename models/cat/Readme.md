@@ -4,3 +4,5 @@
 
 Model from https://free3d.com/3d-model/lowpoly-cat-rigged-run-animation-756268.html
 
+### License
+Personal Use License
