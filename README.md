@@ -27,6 +27,8 @@ The Maxflow-Mincut of this graph is the minimum of ϕ.
 
 ## Requirements
 
+Python 3.8
+
 Conda environment that has **numba** installed.
 - [Installation **numba**](https://numba.readthedocs.io/en/stable/user/installing.html)
 - or `conda install --file requirements.txt`
