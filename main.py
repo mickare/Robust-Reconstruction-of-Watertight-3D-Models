@@ -1,5 +1,8 @@
-import enum
-from typing import Optional, Sequence, Dict
+"""
+Main example that
+"""
+
+from typing import Optional, Sequence
 
 import numba
 import numpy as np
@@ -7,16 +10,12 @@ import pytorch3d.structures
 import torch
 
 import mesh_extraction
-from crust_fix import crust_fix
 from data.chunks import ChunkGrid
 from example import Example, example_config, example_load
 from filters.dilate import dilate
 from mathlib import Vec3i
+from medial_axis_propagating import crust_fix
 from mincut import MinCut
-from model.bunny import FixedBunny
-from model.dragon import Dragon
-from model.model_mesh import MeshModelLoader
-from model.model_pts import PtsModelLoader
 from reconstruction import scale_model, crust_dilation, plot_voxels, diffuse, fill_components, cleanup_components
 from render.cloud_render import CloudRender
 from render.voxel_render import VoxelRender
@@ -24,6 +23,7 @@ from utils import timed
 
 numba.config.THREADING_LAYER = 'omp'
 
+# Configuration, modify here to change the model
 CHUNKSIZE = 16
 RESOLUTION_INIT = 64
 example = Example.BunnyFixed
@@ -31,6 +31,7 @@ STEPS = 4
 APPROX_MEDIAL_AXIS = True
 
 if __name__ == '__main__':
+    # Set initial resolution
     resolution = RESOLUTION_INIT
 
     print("Loading model")

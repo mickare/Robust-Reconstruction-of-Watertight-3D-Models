@@ -1,3 +1,6 @@
+"""
+Steps and methods used during model reconstruction
+"""
 from typing import Optional, Tuple
 
 import numba
@@ -31,6 +34,11 @@ def scale_model(model: np.ndarray, resolution=64) -> Tuple[np.ndarray, Vec3f, fl
 # Crust Dilation
 # =====================================================================
 def find_empty_point_in_chunk(mask: Chunk[np.bool8]) -> Optional[Vec3i]:
+    """
+    Find an empty voxel in a chunk
+    :param mask: voxel chunk
+    :return: global voxel position or None
+    """
     if mask.is_filled():
         if mask.value:
             return mask.position_low
@@ -42,6 +50,11 @@ def find_empty_point_in_chunk(mask: Chunk[np.bool8]) -> Optional[Vec3i]:
 
 
 def find_empty_fill_position(mask: ChunkGrid[np.bool8]) -> Optional[Vec3i]:
+    """
+    Find an empty voxel in a grid
+    :param mask: voxel grid
+    :return: global voxel position or None
+    """
     for i, c in mask.chunks.items():
         if c.any():
             return find_empty_point_in_chunk(c)
@@ -49,6 +62,12 @@ def find_empty_fill_position(mask: ChunkGrid[np.bool8]) -> Optional[Vec3i]:
 
 
 def points_on_chunk_hull(mask: ChunkGrid[np.bool8], count: int = 1) -> Optional[np.ndarray]:
+    """
+    Find an empty voxel in the outer chunks of a grid
+    :param mask: voxel grid
+    :param count: array of global voxel positions or None
+    :return: global voxel positions
+    """
     if not mask.chunks:
         return None
 
@@ -68,6 +87,12 @@ def points_on_chunk_hull(mask: ChunkGrid[np.bool8], count: int = 1) -> Optional[
 
 
 def fill_components(crust: ChunkGrid[np.bool8], max_components=4) -> Tuple[ChunkGrid[np.int8], int]:
+    """
+    Detect the components that are seperated by a crust voxel model by flood filling empty voxels.
+    :param crust: the crust voxels
+    :param max_components: maximum number of components
+    :return: component voxels
+    """
     assert not crust.fill_value
     components = crust.copy(dtype=np.int8, fill_value=np.int8(0))
     count = 1
@@ -86,6 +111,7 @@ def fill_components(crust: ChunkGrid[np.bool8], max_components=4) -> Tuple[Chunk
 
 
 def crust_dilation(crust: ChunkGrid[np.bool8], max_components=5, reverse_steps=3, max_steps=5):
+    """Dilate a crust until the inner component vanishes and return result of some steps reversed"""
     assert max_steps > 0
     max_count = 0
     dilation_step = 0
@@ -129,8 +155,10 @@ def crust_dilation(crust: ChunkGrid[np.bool8], max_components=5, reverse_steps=3
 
 
 def cleanup_components(crust: ChunkGrid[np.bool8], components: ChunkGrid[np.int8], count: int):
-    # Cleanup components and select only the largest component
-    # This will set all other components (0, 3,4,5,...) to be part of crust (1)
+    """
+    Cleanup components and select only the largest component
+    This will set all other components (0, 3,4,5,...) to be part of crust (1)
+    """
     candidates = dict()
     candidates[0] = (components == 0).sum()
     for c in range(3, count):
@@ -149,6 +177,12 @@ def cleanup_components(crust: ChunkGrid[np.bool8], components: ChunkGrid[np.int8
 # =====================================================================
 
 def diffuse(model: ChunkGrid[bool], repeat=1):
+    """
+    Diffuse the voxels in model to their neighboring voxels
+    :param model: the model to diffuse
+    :param repeat: number of diffusion steps
+    :return: diffused model
+    """
     kernel = np.zeros((3, 3, 3), dtype=float)
     kernel[1] = 1
     kernel[:, 1] = 1
@@ -187,6 +221,13 @@ def diffuse(model: ChunkGrid[bool], repeat=1):
 # Render
 # =====================================================================
 def plot_voxels(grid: ChunkGrid[np.bool8], components: ChunkGrid[np.int8], title: Optional[str] = None):
+    """
+    Plot a voxel model
+    :param grid: main voxel model
+    :param components: crust components
+    :param title: String title (optional)
+    :return: plotly figure, to show use `<return>.show()`
+    """
     ren = VoxelRender()
     fig = ren.make_figure(title=title)
     fig.add_trace(ren.grid_voxel(grid, opacity=1.0, name=f"Missing"))
@@ -198,4 +239,3 @@ def plot_voxels(grid: ChunkGrid[np.bool8], components: ChunkGrid[np.int8], title
             fig.add_trace(ren.grid_voxel(components == c, opacity=1.0, name=f"Component {c}"))
     fig.update_layout(showlegend=True)
     return fig
-

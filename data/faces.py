@@ -7,6 +7,7 @@ import numpy as np
 
 from mathlib import Vec3i
 
+# Static face directions
 CHUNK_DIRECTIONS = np.array([(1, 0, 0),
                              (-1, 0, 0),
                              (0, 1, 0),
@@ -14,6 +15,7 @@ CHUNK_DIRECTIONS = np.array([(1, 0, 0),
                              (0, 0, 1),
                              (0, 0, -1)], dtype=np.int)
 
+# Static face slices
 __CSNONE = slice(None)
 CHUNK_SLICE_DEFAULT = [(-1, __CSNONE, __CSNONE),
                        (0, __CSNONE, __CSNONE),
@@ -24,6 +26,7 @@ CHUNK_SLICE_DEFAULT = [(-1, __CSNONE, __CSNONE),
 
 
 class ChunkFace(enum.IntEnum):
+    """Chunk or Voxel Face"""
     NORTH = 0  # +X
     SOUTH = 1  # -X
     TOP = 2  # +Y

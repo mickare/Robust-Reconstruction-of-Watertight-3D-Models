@@ -14,6 +14,7 @@ def __merge_default(target: Dict, default: Dict):
 
 
 def merge_default(target: Dict, *args, **kwargs):
+    """Merge (keys,values) into a target dictionary"""
     for arg in args:
         assert isinstance(arg, dict)
         __merge_default(target, arg)
@@ -22,6 +23,7 @@ def merge_default(target: Dict, *args, **kwargs):
 
 @contextmanager
 def timed(prefix: Optional[str] = None):
+    """Measure and print the time of a code block"""
     prefix = "Duration: " if prefix is None else prefix
     start = time.time()
     yield

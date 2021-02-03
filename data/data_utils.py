@@ -21,6 +21,7 @@ def ceildiv(a, b):
 
 
 class ValueIter:
+    """1D Slice Iterator"""
 
     @classmethod
     def _indices(cls, s: slice, low: int, high: int, clip=True) -> Tuple[int, int, int]:
@@ -95,6 +96,7 @@ class ValueIter:
 
 
 class PositionIter:
+    """3D Slice Iterator"""
 
     @classmethod
     def require_bounded(cls, x: SliceOpt, y: SliceOpt, z: SliceOpt) -> "PositionIter":
@@ -188,6 +190,7 @@ class PositionIter:
 
 
 class MinMaxCheck:
+    """3D minmax check"""
     __slots__ = ["_min", "_max", "_dirty"]
 
     def __init__(self):

@@ -1,3 +1,7 @@
+"""
+Some math helper
+"""
+
 from typing import Union, Tuple, Sequence
 
 import numba

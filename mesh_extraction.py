@@ -1,5 +1,7 @@
-import enum
-from typing import Tuple, Sequence, List, Set, Dict
+"""
+Mesh extractions from voxels
+"""
+from typing import Tuple, List, Set, Dict
 
 import numba
 import numpy as np
@@ -7,9 +9,8 @@ import torch
 from pytorch3d.structures import Meshes
 
 from data.chunks import ChunkGrid, ChunkFace
-from data.faces import CHUNK_DIRECTIONS
 from filters.normals import grid_normals
-from mathlib import Vec3i, Vec3f
+from mathlib import Vec3i
 from mincut import MinCut
 from render import voxel_render
 

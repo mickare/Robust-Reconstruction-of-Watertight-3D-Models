@@ -12,6 +12,11 @@ IndexUnion = Union[Index, Sequence[int], np.ndarray]
 
 
 class IndexDict(Generic[T]):
+    """
+    A dictionary that uses 3d integer position tuples as keys.
+
+    It keeps track of the minimum and maximum positions, which enables a fast size query.
+    """
     __slots__ = ('_data', '_minmax')
 
     def __init__(self) -> None:

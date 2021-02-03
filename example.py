@@ -1,3 +1,6 @@
+"""
+Example configurations for the models that worked well
+"""
 import enum
 from typing import Dict
 

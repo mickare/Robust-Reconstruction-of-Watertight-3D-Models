@@ -1,6 +1,9 @@
-import enum
+"""
+Export a html page with each step visualized.
+"""
+
 import os
-from typing import Optional, Sequence, Dict
+from typing import Optional, Sequence
 
 import numba
 import numpy as np
@@ -8,16 +11,12 @@ import pytorch3d.structures
 import torch
 
 import mesh_extraction
-from crust_fix import crust_fix
 from data.chunks import ChunkGrid
 from example import Example, example_config, example_load
 from filters.dilate import dilate
 from mathlib import Vec3i
+from medial_axis_propagating import crust_fix
 from mincut import MinCut
-from model.bunny import FixedBunny
-from model.dragon import Dragon
-from model.model_mesh import MeshModelLoader
-from model.model_pts import PtsModelLoader
 from reconstruction import scale_model, crust_dilation, plot_voxels, diffuse, fill_components, cleanup_components
 from render.cloud_render import CloudRender
 from render.voxel_render import VoxelRender
@@ -25,18 +24,21 @@ from utils import timed
 
 numba.config.THREADING_LAYER = 'omp'
 
+# Configuration, modify here to change the model
 CHUNKSIZE = 16
 RESOLUTION_INIT = 64
-example = Example.Dragon
-STEPS = 4
+example = Example.Cat
+STEPS = 3
 APPROX_MEDIAL_AXIS = True
 
 if __name__ == '__main__':
+    # Set initial resolution
     resolution = RESOLUTION_INIT
 
     medial_name = "_medial" if APPROX_MEDIAL_AXIS else ""
     name = f"{example.name}{medial_name}"
 
+    # Export path
     path = os.path.join("result", name)
     os.makedirs(path, exist_ok=True)
     plots = []
@@ -55,15 +57,17 @@ if __name__ == '__main__':
         model.pad_chunks(2)
         model.cleanup()
 
+    # Plot only a part of the model points (large models will freeze the browser)
     plot_model: Optional[np.ndarray] = data_pts[::5]
 
     crust: ChunkGrid[np.bool8] = model.copy()
     crust.cleanup(remove=True)
 
+    # Model view
     ren = VoxelRender()
     fig = ren.make_figure()
     fig.add_trace(ren.grid_voxel(crust, opacity=0.1, name='Initial'))
-    fig.add_trace(CloudRender().make_scatter(data_pts, size=1, name='Model'))
+    fig.add_trace(CloudRender().make_scatter(plot_model, size=1, name='Model'))
     plots.append(os.path.join(path, "model.html"))
     fig.write_html(plots[-1])
 

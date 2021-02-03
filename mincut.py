@@ -17,6 +17,9 @@ MinCutNodeIndex = Tuple[Vec3i, ChunkFace]
 
 
 class MinCut:
+    """
+    Creates a MinCut through a voxel crust by connecting an outer and inner surface via octahedral subgraphs per voxel.
+    """
     _segments = None
     _grid_segment0 = None
     _grid_segment1 = None
