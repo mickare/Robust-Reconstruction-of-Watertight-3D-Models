@@ -5,10 +5,11 @@ Point Clouds Without Normal Information" by A. Hornung and L. Kobbelt](https://d
 
 ## TL;DR
 
-The **watertight mesh of a point cloud** is the the minimum of a **3D distance function ϕ** to the point cloud.
+The goal is to create a **watertight mesh** from a **point cloud**.
 
-The paper proposes a **minimum solver** of that **3D distance function ϕ**
-by using a **max-flow min-cut** through a **voxel grid**.
+The core idea is that the **watertight mesh** is the the **minimum** of a 3D **distance function ϕ** to the points.
+
+Basically a **minimum solver** is proposed that solves the **minimum** of that **distance function ϕ** by using a **max-flow min-cut** through a **voxel grid**.
 
 
 ## How it works
@@ -97,5 +98,3 @@ The code in this repository is licensed under the [MIT License](LICENSE).
 The models and point clouds are each licensed from a third party and are not part of this license!
 You should NOT distribute or use these models against their license.
 A list of the used model licenses and source is at [models/README.md](models/README.md).
-
-The listed [requirements](requirements.txt) are not part of this license!
