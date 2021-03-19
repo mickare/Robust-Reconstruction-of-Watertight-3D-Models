@@ -79,21 +79,21 @@ Point clouds (like Cat and Dog) can be generated from existing wavefront `.obj` 
 # Code
 ## Voxel Data Structure
 
-We split the voxel space into chunks, which we stored in a flat `dict` which we call [`ChunkGrid`](data/chunks.py).
-Both [`Chunk`](data/chunks.py) and [`ChunkGrid`](data/chunks.py) have a fill value which is used in the case of a filled or missing chunk.
-The standard math (+, -, /, *, ...) and logical (&, ^, |, ...) operators are implemented for both [`Chunk`](data/chunks.py)
-and [`ChunkGrid`](data/chunks.py), and are forwarded to the internal numpy arrays or fill values.
+We split the voxel space into chunks, which we stored in a flat `dict` which we call [`ChunkGrid`](reconstruction/data/chunks.py).
+Both [`Chunk`](reconstruction/data/chunks.py) and [`ChunkGrid`](reconstruction/data/chunks.py) have a fill value which is used in the case of a filled or missing chunk.
+The standard math (+, -, /, *, ...) and logical (&, ^, |, ...) operators are implemented for both [`Chunk`](reconstruction/data/chunks.py)
+and [`ChunkGrid`](reconstruction/data/chunks.py), and are forwarded to the internal numpy arrays or fill values.
 
 The chunk size N³ (e.g. 16x16x16) can be configured in [`main.py`](main.py) or [`export.py`](export.py).
 
 ![alt text](img/chunk_grid.png "Voxel ChunkGrid")
 
-You can find the data structure in [`data/chunks.py`](data/chunks.py).
+You can find the data structure in [`data/chunks.py`](reconstruction/data/chunks.py).
 
 ## Plotting
 [Plotly](https://plotly.com/) is used for plotting the 3D point clouds, meshes and voxels.
 
-The voxel mesh is created in [`render/voxel_render.py`](render/voxel_render.py).
+The voxel mesh is created in [`render/voxel_render.py`](reconstruction/render/voxel_render.py).
 It reduces the number of triangle faces by merging neighboring voxel faces.
 
 
