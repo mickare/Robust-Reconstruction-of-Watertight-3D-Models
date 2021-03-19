@@ -2,8 +2,8 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from data.chunks import ChunkGrid
-from mathlib import Vec3f
+from reconstruction.data.chunks import ChunkGrid
+from reconstruction.mathlib import Vec3f
 
 
 def make_normal_kernel(shape: Tuple[int, int, int] = (3, 3, 3)) -> np.ndarray:

@@ -4,9 +4,9 @@ import maxflow
 import numpy as np
 import tqdm
 
-from data.chunks import ChunkGrid
-from data.faces import ChunkFace
-from mathlib import Vec3i
+from reconstruction.data.chunks import ChunkGrid
+from reconstruction.data.faces import ChunkFace
+from reconstruction.mathlib import Vec3i
 
 MinCutNodeIndex = Tuple[Vec3i, ChunkFace]
 

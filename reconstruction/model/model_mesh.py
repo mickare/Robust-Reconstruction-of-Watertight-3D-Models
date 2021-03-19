@@ -1,12 +1,12 @@
 import os
 from dataclasses import dataclass
-from typing import Tuple, Union, Sequence
+from typing import Tuple
 
 import numpy as np
 import pywavefront
 
-from mathlib import Vec3f
-from model.loader import ModelLoader
+from reconstruction.mathlib import Vec3f
+from .loader import ModelLoader
 
 
 @dataclass

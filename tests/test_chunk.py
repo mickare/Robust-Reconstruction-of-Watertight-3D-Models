@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from data.chunks import Chunk
+from reconstruction.data.chunks import Chunk
 
 
 class TestChunkOperator(unittest.TestCase):

@@ -2,8 +2,8 @@ import unittest
 
 import numpy as np
 
-from data.chunks import ChunkGrid
-from filters.dilate import dilate
+from reconstruction.data.chunks import ChunkGrid
+from reconstruction.filters.dilate import dilate
 
 
 class TestDilate(unittest.TestCase):

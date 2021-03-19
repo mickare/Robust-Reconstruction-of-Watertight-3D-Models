@@ -3,7 +3,7 @@ from typing import Tuple, Sequence
 
 import numpy as np
 
-from model.model_pts import PtsModelLoader
+from .model_pts import PtsModelLoader
 
 
 class FixedBunny:
@@ -27,7 +27,7 @@ class FixedBunny:
     @classmethod
     def bunny(cls):
         dir_path = os.path.dirname(os.path.realpath(__file__))
-        file = os.path.join(dir_path, "../models/bunny/bunnyData.pts")
+        file = os.path.join(dir_path, "../../models/bunny/bunnyData.pts")
         model = PtsModelLoader().load(file)
 
         base = np.concatenate(cls._bunny_fix_baseplate(model))
@@ -45,7 +45,7 @@ class FixedBunny:
 
 
 if __name__ == '__main__':
-    from render.cloud_render import CloudRender
+    from reconstruction.render.cloud_render import CloudRender
 
     data = FixedBunny.bunny()
 

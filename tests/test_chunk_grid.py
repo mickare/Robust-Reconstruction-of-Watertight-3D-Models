@@ -4,8 +4,8 @@ from typing import Type
 
 import numpy as np
 
-from data.chunks import ChunkGrid
-from data.faces import ChunkFace
+from reconstruction.data.chunks import ChunkGrid
+from reconstruction.data.faces import ChunkFace
 
 
 class TestChunkGridSetter(unittest.TestCase):

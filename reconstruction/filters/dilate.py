@@ -3,8 +3,8 @@ from typing import Optional, Union
 import numpy as np
 from scipy import ndimage
 
-from data.chunks import ChunkGrid, Chunk
-from data.faces import ChunkFace
+from reconstruction.data.chunks import ChunkGrid, Chunk
+from reconstruction.data.faces import ChunkFace
 
 bool_t = Union[bool, np.bool8]
 

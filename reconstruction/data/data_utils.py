@@ -2,7 +2,7 @@ from typing import Union, Tuple, Iterator, Optional, Iterable, Callable
 
 import numpy as np
 
-from mathlib import Vec3i
+from reconstruction.mathlib import Vec3i
 
 Index = Tuple[int, int, int]
 SliceOpt = Union[int, slice, None]

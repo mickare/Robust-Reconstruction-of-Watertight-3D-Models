@@ -8,8 +8,8 @@ import plyfile
 import plotly.graph_objects as go
 import tqdm
 
-from mathlib import quaternion_rotation_matrix
-from model.loader import ModelLoader
+from reconstruction.mathlib import quaternion_rotation_matrix
+from .loader import ModelLoader
 
 
 class Transform:
@@ -132,14 +132,14 @@ class PlyFolderLoader(ModelLoader):
         h.update("\n".join(conf).encode('utf-8'))
         key = h.hexdigest()
 
-        file = os.path.join("../.cache", f"{key}_ply.npy")
+        file = os.path.join("../../.cache", f"{key}_ply.npy")
         if os.path.isfile(file):
             print(f"Loading {fname} from Cache...")
             data = np.load(file, allow_pickle=False)
         else:
             print(f"Loading {fname} from File...")
             data = self.load_file(path)
-            os.makedirs("../.cache", exist_ok=True)
+            os.makedirs("../../.cache", exist_ok=True)
             np.save(file, data, allow_pickle=False)
 
         return data
@@ -160,14 +160,14 @@ class PlyModelLoader(ModelLoader):
         h.update(os.path.getsize(path).to_bytes(10, byteorder='big'))
         key = h.hexdigest()
 
-        file = os.path.join("../.cache", f"{key}_ply.npy")
+        file = os.path.join("../../.cache", f"{key}_ply.npy")
         if os.path.isfile(file):
             print(f"Loading {fname} from Cache...")
             data = np.load(file, allow_pickle=False)
         else:
             print(f"Loading {fname} from File...")
             data = self.load_file(path)
-            os.makedirs("../.cache", exist_ok=True)
+            os.makedirs("../../.cache", exist_ok=True)
             np.save(file, data, allow_pickle=False)
         return data
 

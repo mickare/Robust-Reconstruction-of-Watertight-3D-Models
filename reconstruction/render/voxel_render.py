@@ -5,9 +5,9 @@ import numpy as np
 import plotly.graph_objects as go
 import tqdm
 
-from data.chunks import Chunk, ChunkGrid, ChunkFace
-from mathlib import Vec3f
-from utils import merge_default
+from reconstruction.data.chunks import Chunk, ChunkGrid, ChunkFace
+from reconstruction.mathlib import Vec3f
+from reconstruction.utils import merge_default
 
 
 def immutable(arr: np.ndarray):
@@ -503,9 +503,9 @@ class VoxelRender:
 
 
 if __name__ == '__main__':
-    from render.cloud_render import CloudRender
-    from model.model_pts import FixedPtsModels
-    from filters.fill import flood_fill_at
+    from reconstruction.render.cloud_render import CloudRender
+    from reconstruction.model import FixedPtsModels
+    from reconstruction.filters import flood_fill_at
 
     # data = PtsModelLoader().load("models/bunny/bunnyData.pts")
     data = FixedPtsModels.bunny()

@@ -2,10 +2,9 @@ import enum
 import itertools
 from typing import Optional, Tuple, Union, Sequence, Iterator
 
-import numba
 import numpy as np
 
-from mathlib import Vec3i
+from reconstruction.mathlib import Vec3i
 
 # Static face directions
 CHUNK_DIRECTIONS = np.array([(1, 0, 0),
