@@ -13,6 +13,9 @@ The core idea is that the **watertight mesh** is the the **minimum** of a 3D **d
 
 Basically a **minimum solver** is proposed that solves the **minimum** of that **distance function ϕ** by using a **max-flow min-cut** through a **voxel grid**.
 
+## Examples
+
+There are **online interactive renders** at: https://mickare.github.io/Robust-Reconstruction-of-Watertight-3D-Models/
 
 ## How it works
 
