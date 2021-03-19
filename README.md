@@ -11,7 +11,7 @@ The goal is to create a **watertight mesh** from a **point cloud**.
 
 The core idea is that the **watertight mesh** is the the **minimum** of a 3D **distance function ϕ** to the points.
 
-Basically a **minimum solver** is proposed that solves the **minimum** of that **distance function ϕ** by using a **max-flow min-cut** through a **voxel grid**.
+The paper proposes a **minimum solver** that solves the **minimum** of that **distance function ϕ** by using a **max-flow min-cut** through a **voxel grid**.
 
 ## Examples
 
