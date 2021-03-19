@@ -7,11 +7,11 @@ import numba
 import numpy as np
 from scipy import ndimage
 
-from data.chunks import ChunkGrid, Chunk
-from filters.dilate import dilate
-from filters.fill import flood_fill_at
-from mathlib import Vec3i, Vec3f
-from render.voxel_render import VoxelRender
+from reconstruction.data.chunks import ChunkGrid, Chunk
+from reconstruction.filters.dilate import dilate
+from reconstruction.filters.fill import flood_fill_at
+from reconstruction.mathlib import Vec3i, Vec3f
+from reconstruction.render.voxel_render import VoxelRender
 
 numba.config.THREADING_LAYER = 'omp'
 

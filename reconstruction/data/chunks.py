@@ -4,10 +4,10 @@ from typing import Union, Tuple, Iterator, Optional, Generic, TypeVar, Callable,
 
 import numpy as np
 
-from data.data_utils import PositionIter
-from data.faces import ChunkFace
-from data.index_dict import IndexDict, Index
-from mathlib import Vec3i
+from .data_utils import PositionIter
+from .faces import ChunkFace
+from .index_dict import IndexDict, Index
+from reconstruction.mathlib import Vec3i
 
 V = TypeVar('V')
 M = TypeVar('M')

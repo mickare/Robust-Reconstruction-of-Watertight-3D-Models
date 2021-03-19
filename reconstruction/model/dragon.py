@@ -2,12 +2,11 @@ import os
 from typing import Tuple, Iterator, Optional
 
 import numpy as np
-import plyfile
 
-from model.model_ply import PlyModelLoader, Scan
+from .model_ply import PlyModelLoader
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
-default_path = os.path.join(dir_path, "../models")
+default_path = os.path.join(dir_path, "../../models")
 
 
 class Dragon:
@@ -15,7 +14,7 @@ class Dragon:
     @classmethod
     def load(cls, path: Optional[str] = None):
         if path is None:
-            path = os.path.join(default_path, "dragon_recon/dragon_vrip.ply")
+            path = os.path.join(default_path, "../../models/dragon_recon/dragon_vrip.ply")
         return PlyModelLoader().load(path)
 
 
@@ -48,7 +47,7 @@ class MergedDragon:
 def plot_dragon():
     data = Dragon.load()
 
-    from render.cloud_render import CloudRender
+    from reconstruction.render.cloud_render import CloudRender
     ren = CloudRender()
     fig = ren.make_figure()
     fig.add_trace(ren.make_scatter(data, size=1))

@@ -1,9 +1,7 @@
 import unittest
-import numpy as np
 
-from data.faces import ChunkFace
-from mesh_extraction import *
-from mesh_extraction import _detect_cut_edges
+from reconstruction.mesh_extraction import *
+from reconstruction.mesh_extraction import _detect_cut_edges
 
 
 class TestDilate(unittest.TestCase):

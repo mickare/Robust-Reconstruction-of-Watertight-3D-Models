@@ -3,8 +3,8 @@ from typing import Dict, Union, Tuple, Iterator, Optional, Iterable, Sequence, G
 
 import numpy as np
 
-from data.data_utils import MinMaxCheck, PositionIter
-from mathlib import Vec3i
+from reconstruction.data.data_utils import MinMaxCheck, PositionIter
+from reconstruction.mathlib import Vec3i
 
 T = TypeVar('T')
 Index = Tuple[int, int, int]

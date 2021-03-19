@@ -1,9 +1,8 @@
 import os
-from typing import Tuple, Sequence
 
 import numpy as np
 
-from model.loader import ModelLoader
+from .loader import ModelLoader
 
 
 class PtsModelLoader(ModelLoader):

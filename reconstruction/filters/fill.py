@@ -6,9 +6,9 @@ from typing import Optional, List, Tuple, Collection, Set
 import numpy as np
 from scipy import ndimage
 
-from data.chunks import Index, Chunk, ChunkGrid
-from data.faces import ChunkFace
-from mathlib import Vec3i
+from reconstruction.data.chunks import Index, Chunk, ChunkGrid
+from reconstruction.data.faces import ChunkFace
+from reconstruction.mathlib import Vec3i
 
 b8 = np.bool8
 b8_True = b8(True)

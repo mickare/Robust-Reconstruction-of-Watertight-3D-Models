@@ -8,11 +8,11 @@ import numpy as np
 import torch
 from pytorch3d.structures import Meshes
 
-from data.chunks import ChunkGrid, ChunkFace
-from filters.normals import grid_normals
-from mathlib import Vec3i
-from mincut import MinCut
-from render import voxel_render
+from reconstruction.data.chunks import ChunkGrid, ChunkFace
+from reconstruction.filters.normals import grid_normals
+from reconstruction.mathlib import Vec3i
+from reconstruction.mincut import MinCut
+from reconstruction.render import voxel_render
 
 numba.config.THREADING_LAYER = 'omp'
 

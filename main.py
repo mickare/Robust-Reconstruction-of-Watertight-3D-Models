@@ -9,17 +9,18 @@ import numpy as np
 import pytorch3d.structures
 import torch
 
-import mesh_extraction
-from data.chunks import ChunkGrid
 from example import Example, example_config, example_load
-from filters.dilate import dilate
-from mathlib import Vec3i
-from medial_axis_propagating import crust_fix
-from mincut import MinCut
-from reconstruction import scale_model, crust_dilation, plot_voxels, diffuse, fill_components, cleanup_components
-from render.cloud_render import CloudRender
-from render.voxel_render import VoxelRender
-from utils import timed
+from reconstruction import mesh_extraction
+from reconstruction.data.chunks import ChunkGrid
+from reconstruction.filters.dilate import dilate
+from reconstruction.mathlib import Vec3i
+from reconstruction.medial_axis_propagating import crust_fix
+from reconstruction.mincut import MinCut
+from reconstruction.reconstruction import scale_model, crust_dilation, plot_voxels, diffuse, fill_components, \
+    cleanup_components
+from reconstruction.render.cloud_render import CloudRender
+from reconstruction.render.voxel_render import VoxelRender
+from reconstruction.utils import timed
 
 numba.config.THREADING_LAYER = 'omp'
 

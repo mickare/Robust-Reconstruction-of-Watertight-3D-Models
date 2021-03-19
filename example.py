@@ -6,10 +6,10 @@ from typing import Dict
 
 import numpy as np
 
-from model.bunny import FixedBunny
-from model.dragon import Dragon
-from model.model_mesh import MeshModelLoader
-from model.model_pts import PtsModelLoader
+from reconstruction.model.bunny import FixedBunny
+from reconstruction.model.dragon import Dragon
+from reconstruction.model.model_mesh import MeshModelLoader
+from reconstruction.model.model_pts import PtsModelLoader
 
 
 class Example(enum.Enum):
