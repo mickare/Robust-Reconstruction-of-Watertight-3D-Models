@@ -1,4 +1,4 @@
-# Example Mesh Reconstructions
+# Mesh Reconstructions - Online Interactive Renders
 
 Default | with Medial-Axis enhancement
 -|-
