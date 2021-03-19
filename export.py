@@ -22,6 +22,8 @@ from render.cloud_render import CloudRender
 from render.voxel_render import VoxelRender
 from utils import timed
 
+import render.plotly_html
+
 numba.config.THREADING_LAYER = 'omp'
 
 # Configuration, modify here to change the model
@@ -69,7 +71,7 @@ if __name__ == '__main__':
     fig.add_trace(ren.grid_voxel(crust, opacity=0.1, name='Initial'))
     fig.add_trace(CloudRender().make_scatter(plot_model, size=1, name='Model'))
     plots.append(os.path.join(path, "model.html"))
-    fig.write_html(plots[-1])
+    fig.write_html(plots[-1], include_plotlyjs='cdn')
 
     print("Dilation")
     with timed("\tTime: "):
@@ -79,7 +81,7 @@ if __name__ == '__main__':
 
         fig = plot_voxels(components == 0, components, title=f"Initial Dilation")
         plots.append(os.path.join(path, f"dilation_start.html"))
-        fig.write_html(plots[-1])
+        fig.write_html(plots[-1], include_plotlyjs='cdn')
 
         crust_dilate = dilate(crust)
         outer_fill = components == 2
@@ -117,7 +119,7 @@ if __name__ == '__main__':
 
                 for fig_name, fig in medial_figs.items():
                     plots.append(os.path.join(path_step, f"{fig_name}.html"))
-                    fig.write_html(plots[-1])
+                    fig.write_html(plots[-1], include_plotlyjs='cdn')
 
             #     # crust_inner[model] = False  # Remove model voxels if they have been added by the crust fix
 
@@ -131,7 +133,7 @@ if __name__ == '__main__':
                 fig.add_trace(CloudRender().make_scatter(plot_model, size=0.7, name='Model'))
 
             plots.append(os.path.join(path_step, f"crust.html"))
-            fig.write_html(plots[-1])
+            fig.write_html(plots[-1], include_plotlyjs='cdn')
 
         print("Diffusion")
         with timed("\tTime: "):
@@ -173,7 +175,7 @@ if __name__ == '__main__':
                 mode="markers",
             ))
             plots.append(os.path.join(path_step, f"diffusion.html"))
-            fig.write_html(plots[-1])
+            fig.write_html(plots[-1], include_plotlyjs='cdn')
 
         print("MinCut")
         with timed("\tTime: "):
@@ -191,7 +193,7 @@ if __name__ == '__main__':
             if plot_model is not None:
                 fig.add_trace(CloudRender().make_scatter(plot_model, size=1, name='Model'))
             plots.append(os.path.join(path_step, f"mincut.html"))
-            fig.write_html(plots[-1])
+            fig.write_html(plots[-1], include_plotlyjs='cdn')
 
         print("Volumetric refinement")
         with timed("\tTime: "):
@@ -242,7 +244,7 @@ if __name__ == '__main__':
             fig.update_layout(showlegend=True)
 
             plots.append(os.path.join(path_step, f"mesh_extraction.html"))
-            fig.write_html(plots[-1])
+            fig.write_html(plots[-1], include_plotlyjs='cdn')
 
         print("Smoothing mesh")
         with timed("\tTime: "):
@@ -261,21 +263,80 @@ if __name__ == '__main__':
             fig.update_layout(showlegend=True)
 
             plots.append(os.path.join(path_step, f"mesh_final.html"))
-            fig.write_html(plots[-1])
+            fig.write_html(plots[-1], include_plotlyjs='cdn')
 
-    html = f"""
-    <html>
+    links = ""
+    for p in plots:
+        rel_p = p[len(path) + 1:]
+        links += f"<li><a href=\"{rel_p}\" target=\"page\">{rel_p}</a></li>"
+
+    html = f"""<html>
 <head>
     <title>{name}</title>
-    </head>
-<body>"""
-    html += "<ul>"
-    for p in plots:
-        html += f"<li><a href=\"{p}\">{p}</a></li>"
-    html += "</ul>"
-    html += """
+    <style>
+    html, body {{
+        height: 100%;
+        margin: 0;
+    }}
+    #iframe_page {{
+        width:100%;height:100%;
+        display: inline-block;
+        padding:0; margin:0;
+    }}
+    
+    /* DivTable.com */
+    .divTable{{
+        display: table;
+        width: 100%; height:100%;
+    }}
+    .divTableRow {{
+        display: table-row;
+    }}
+    .divTableHeading {{
+        background-color: #EEE;
+        display: table-header-group;
+    }}
+    .divTableCell, .divTableHead {{
+        border: 1px solid #999999;
+        display: table-cell;
+        padding: 3px 10px;
+    }}
+    .divTableHeading {{
+        background-color: #EEE;
+        display: table-header-group;
+        font-weight: bold;
+    }}
+    .divTableFoot {{
+        background-color: #EEE;
+        display: table-footer-group;
+        font-weight: bold;
+    }}
+    .divTableBody {{
+        display: table-row-group;
+    }}
+    </style>
+</head>
+<body>
+<div class="divTable">
+<div class="divTableBody">
+<div class="divTableRow">
+<div class="divTableCell" style="vertical-align: top; max-width: 40px;">
+    <div>
+        <ul>
+            <li><a href="..">..</a></li>
+        </ul>
+        <ul>
+        {links}
+        </ul>
+    </ul>
+</div>
+</div>
+<div class="divTableCell" style="position:relative;padding:0; margin:0;"><iframe src="model.html" name="page" id="iframe_page"></iframe></div>
+</div>
+</div>
+</div>
 </body>
-    </html>
+</html>
     """
 
     with open(os.path.join(path, "index.html"), 'wt') as fp:
