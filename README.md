@@ -96,8 +96,13 @@ You can find the data structure in [`data/chunks.py`](reconstruction/data/chunks
 The voxel mesh is created in [`render/voxel_render.py`](reconstruction/render/voxel_render.py).
 It reduces the number of triangle faces by merging neighboring voxel faces.
 
+## Contributors
 
-# License
+<a href="https://github.com/mickare/Robust-Reconstruction-of-Watertight-3D-Models/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=mickare/Robust-Reconstruction-of-Watertight-3D-Models" />
+</a>
+
+## License
 The code in this repository is licensed under the [MIT License](LICENSE).
 
 The models and point clouds are each licensed from a third party and are not part of this license!
