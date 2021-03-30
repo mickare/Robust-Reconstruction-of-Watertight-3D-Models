@@ -99,9 +99,8 @@ It reduces the number of triangle faces by merging neighboring voxel faces.
 ## Contributors
 
 <a href="https://github.com/mickare/Robust-Reconstruction-of-Watertight-3D-Models/graphs/contributors">
-  <img src="https://contributors-img.web.app/image?repo=mickare/Robust-Reconstruction-of-Watertight-3D-Models" />
+  <img src="https://contrib.rocks/image?repo=mickare/Robust-Reconstruction-of-Watertight-3D-Models" />
 </a>
-
 
 ## License
 The code in this repository is licensed under the [MIT License](LICENSE).
